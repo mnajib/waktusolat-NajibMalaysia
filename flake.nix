@@ -1,0 +1,67 @@
+{
+  description = "waktusolat-NajibMalaysia: JAKIM prayer-time fetcher daemon + status-bar renderers";
+
+  inputs = {
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    flake-utils.url = "github:numtide/flake-utils";
+  };
+
+  outputs = { self, nixpkgs, flake-utils, ... }:
+    flake-utils.lib.eachDefaultSystem (system:
+      let
+        pkgs = import nixpkgs { inherit system; };
+
+        # Common runtime deps shared by fetchd + renderers + cli.
+        # curl  : HTTP fetch from JAKIM e-solat API
+        # jq    : JSON parsing/building (neutral data file is JSON)
+        # util-linux : provides `flock`, used by waktusolat-fetchd's singleton guard
+        runtimeDeps = with pkgs; [ curl jq coreutils gawk gnused util-linux ];
+
+        mkScript = name: pkgs.stdenv.mkDerivation {
+          pname = name;
+          version = "0.1.0";
+          src = ./.;
+          nativeBuildInputs = [ pkgs.makeWrapper ];
+          dontBuild = true;
+          installPhase = ''
+            mkdir -p $out/bin $out/lib
+            install -m755 bin/${name} $out/bin/${name}
+            cp -r lib/* $out/lib/
+            wrapProgram $out/bin/${name} \
+              --set WAKTUSOLAT_LIB_DIR "$out/lib" \
+              --prefix PATH : ${pkgs.lib.makeBinPath runtimeDeps}
+          '';
+        };
+      in
+      {
+        packages = {
+          fetchd        = mkScript "waktusolat-fetchd";
+          render-xmobar = mkScript "waktusolat-render-xmobar";
+          render-waybar = mkScript "waktusolat-render-waybar";
+          cli           = mkScript "waktusolat-cli";
+          default       = self.packages.${system}.fetchd;
+        };
+
+        devShells.default = pkgs.mkShell {
+          buildInputs = runtimeDeps ++ [ pkgs.bats pkgs.shellcheck ];
+        };
+
+        apps = {
+          fetchd = {
+            type = "app";
+            program = "${self.packages.${system}.fetchd}/bin/waktusolat-fetchd";
+          };
+        };
+
+        checks.bats = pkgs.runCommand "waktusolat-bats-tests" {
+          nativeBuildInputs = [ pkgs.bats ] ++ runtimeDeps;
+        } ''
+          cd ${./.}
+          bats tests/
+          touch $out
+        '';
+      }
+    ) // {
+      homeManagerModules.default = import ./module/home-manager.nix self;
+    };
+}

@@ -1,0 +1,100 @@
+#!/usr/bin/env bash
+# bin/waktusolat-render-waybar
+#
+# Copyright (c) 2026 waktusolat-NajibMalaysia
+# Licensed under the BSD 3-Clause License. See LICENSE file for details.
+#
+# NEW (no equivalent existed in xmonad-config-NajibMalaysia). One-shot
+# renderer for Waybar's `custom` module with `"return-type": "json"`. Reads
+# the same NEUTRAL_DATA_FILE that waktusolat-render-xmobar reads -- both
+# renderers are pure consumers of waktusolat-fetchd's output, so running
+# this alongside the xmobar renderer (e.g. xmonad + Niri both logged in) is
+# safe: neither writes anything, they only read.
+#
+# Waybar JSON contract (return-type=json):
+#   {"text": "...", "tooltip": "...", "class": ["..."], "percentage": N}
+# `class` is used for CSS styling in style.css (see README.md), NOT for
+# embedded color markup the way xmobar's <fc=...> works -- so unlike the
+# xmobar renderer, this script has no dependency on lib/xmobar-colorize.sh.
+#
+# by Muhammad Najib Bin Ibrahim <mnajib@gmail.com>
+
+set -euo pipefail
+: "${USER:=$(id -un)}"
+
+LIB_DIR="${WAKTUSOLAT_LIB_DIR:-$(dirname "$(readlink -f "$0")")/../lib}"
+source "${LIB_DIR}/logger.sh"
+source "${LIB_DIR}/format-helpers.sh"
+
+set_log_file "/tmp/${USER}-waktusolat-render-waybar.log"
+set_log_level "${WAKTUSOLAT_LOGLEVEL:-SILENT}"
+
+NEUTRAL_DATA_FILE="/tmp/${USER}-waktusolat-data.json"
+
+if [[ ! -s "$NEUTRAL_DATA_FILE" ]]; then
+    jq -n '{text:"waktu solat: no data", tooltip:"waktusolat-fetchd has not written any data yet", class:["error"]}'
+    exit 0
+fi
+
+zone=$(jq -r '.zone' "$NEUTRAL_DATA_FILE")
+hdate=$(jq -r '.hijri_date' "$NEUTRAL_DATA_FILE")
+day=$(jq -r '.day' "$NEUTRAL_DATA_FILE")
+is_stale=$(jq -r '.is_stale' "$NEUTRAL_DATA_FILE")
+
+HMONTHNUMBER=$(echo "$hdate" | awk -F- '{print $2}')
+HMONTHFULLNAME=$(namaBulanH "$HMONTHNUMBER" long)
+nomborHari=$(nomHari "$day")
+hariInBM=$(namaHariBM "$nomborHari")
+
+declare -A T
+while IFS=$'\t' read -r name_bm ptime; do
+    T["$name_bm"]="$ptime"
+done < <(jq -r '.prayers[] | [.name_bm, .time] | @tsv' "$NEUTRAL_DATA_FILE")
+
+current_time=$(date +"%H:%M")
+
+# Find the next upcoming prayer (first one whose time is >= current_time,
+# in the fixed JAKIM order Imsak..Isyak; if none, we're past Isyak so the
+# "next" prayer is tomorrow's Imsak, which we just label as such).
+order=(Imsak Subuh Syuruk Zohor Asar Maghrib Isyak)
+next_name=""
+next_time=""
+current_minutes=$((10#${current_time%%:*} * 60 + 10#${current_time##*:}))
+for name in "${order[@]}"; do
+    ptime="${T[$name]}"
+    p_minutes=$((10#${ptime%%:*} * 60 + 10#${ptime##*:}))
+    if (( p_minutes >= current_minutes )); then
+        next_name="$name"
+        next_time="$ptime"
+        break
+    fi
+done
+if [[ -z "$next_name" ]]; then
+    next_name="Imsak (esok)"
+    next_time="${T[Imsak]}"
+fi
+
+# CSS class for styling: "near" when the next prayer is within 15 minutes,
+# "stale" when waktusolat-fetchd flagged the data as failed-to-refresh.
+classes="[]"
+if [[ "$is_stale" == "true" ]]; then
+    classes=$(jq -c '. + ["stale"]' <<< "$classes")
+fi
+if [[ -n "$next_time" ]]; then
+    diff_minutes=$(( $(( 10#${next_time%%:*} * 60 + 10#${next_time##*:} )) - current_minutes ))
+    if (( diff_minutes >= 0 && diff_minutes <= 15 )); then
+        classes=$(jq -c '. + ["near"]' <<< "$classes")
+    fi
+fi
+
+text="${next_name} ${next_time}"
+tooltip="${zone} | ${hariInBM}, ${HMONTHFULLNAME} ${hdate}"$'\n'
+for name in "${order[@]}"; do
+    tooltip+="${name}: ${T[$name]}"$'\n'
+done
+
+jq -n \
+    --arg text "$text" \
+    --arg tooltip "$tooltip" \
+    --argjson class "$classes" \
+    '{text:$text, tooltip:$tooltip, class:$class}'
