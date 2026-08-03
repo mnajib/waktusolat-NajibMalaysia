@@ -11,19 +11,22 @@ copy against the JAKIM API.
 ```
                          systemd --user
                   ┌───────────────────────────┐
-                  │  waktusolat-fetchd.service │  <- ONE instance, WM-agnostic
-                  └─────────────┬──────────────┘
-                                │ writes
-                                ▼
-                 /tmp/$USER-waktusolat-data.json   (neutral JSON, no markup)
+                  │ waktusolat-fetchd.service │  <-- ONE instance, WM-agnostic
+                  └────────────┬──────────────┘
+                               │ writes
+                               ▼
+       ┌────────────────────────────────────────────────────────────────┐
+       │   /tmp/$USER-waktusolat-data.json   (neutral JSON, no markup)  │
+       └────────────────────────────────────────────────────────────────┘
                      ▲                        ▲
                      │ reads                  │ reads
-        ┌────────────┴───────────┐  ┌─────────┴────────────────┐
-        │ waktusolat-render-     │  │ waktusolat-render-        │
-        │ xmobar                 │  │ waybar                    │
-        └────────────┬────────────┘  └─────────┬──────────────┘
-                     ▼                          ▼
-                 xmobar                    Waybar (Niri)
+        ┌────────────┴───────────┐  ┌─────────┴──────────────┐
+        │ waktusolat-render-     │  │ waktusolat-render-     │
+        │ xmobar                 │  │ waybar                 │
+        └────────────┬───────────┘  └─────────┬──────────────┘
+                     │                        │
+                     ▼                        ▼
+                   xmobar                  Waybar (Niri)
 ```
 
 `waktusolat-fetchd` is guarded by `flock` (`/tmp/$USER-waktusolat-fetchd.lock`)
@@ -39,23 +42,41 @@ LAN. Every other host asks `nyxora` first, and only falls back to fetching
 JAKIM directly if `nyxora` is unreachable (e.g. `parang` away from home).
 
 ```
-                                JAKIM e-solat API
-                                       │
-                                       ▼
-                     nyxora: waktusolat-fetchd (origin role)
-                     writes -> /var/lib/waktusolat/SGR01.json
-                     served by Caddy -> http://nyxora:8089/SGR01.json
-                                       │ LAN
+                            ┌────────────────────────┐
+                            │    JAKIM e-solat API   │
+                            └────────────────────────┘
+                                        │
+                                        ▼
+                  ┌─────────────────────────────────────────────────────┐
+                  │  nyxora: waktusolat-fetchd (origin role)            │
+                  │  writes -> /var/lib/waktusolat/SGR01.json           │
+                  │  served by Caddy -> http://nyxora:8089/SGR01.json   │
+                  └─────────────────────────────────────────────────────┘
+                                        │
+                                        │ LAN
+                                        │
         ┌───────────────┬───────────────┼───────────────┐
+        │               │               │               │
         ▼               ▼               ▼               ▼
-   khawlah          parang          bawang           nyxora
-   (client role:    (client role:   (client role:    (renderers read
-   ask nyxora,      ask nyxora,     ask nyxora,       /var/lib/waktusolat
-   fall back to     fall back to    fall back to      directly, no
-   JAKIM if away)   JAKIM if away)  JAKIM if away)     network hop)
+  ┌───────────────┐ ┌──────────────┐ ┌──────────────┐ ┌───────────────────┐
+  │khawlah        │ │parang        │ │bawang        │ │nyxora             │
+  │(client role:  │ │(client role: │ │(client role: │ │(renderers read    │
+  │ask nyxora,    │ │ask nyxora,   │ │ask nyxora,   │ │/var/lib/waktusolat│
+  │fall back to   │ │fall back to  │ │fall back to  │ │directly, no       │
+  │JAKIM if away) │ │JAKIM if away)│ │JAKIM if away)│ │network hop)       │
+  └───────────────┘ └──────────────┘ └──────────────┘ └───────────────────┘
         │               │               │
-        ▼               ▼               ▼
-   /var/cache/waktusolat/SGR01.json  (shared by ALL local users on that host)
+        │               │               │
+        │               │               ▼
+        │               │           ┌────────────────────────────────────────────────────────────────────────────┐
+        │               │           │ /var/cache/waktusolat/SGR01.json  (shared by ALL local users on that host) │
+        │               ▼           └────────────────────────────────────────────────────────────────────────────┘
+        │           ┌────────────────────────────────────────────────────────────────────────────┐
+        │           │ /var/cache/waktusolat/SGR01.json  (shared by ALL local users on that host) │
+        ▼           └────────────────────────────────────────────────────────────────────────────┘
+   ┌────────────────────────────────────────────────────────────────────────────┐
+   │ /var/cache/waktusolat/SGR01.json  (shared by ALL local users on that host) │
+   └────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ### On `nyxora` (the aggregator)
