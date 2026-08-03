@@ -71,10 +71,13 @@
       # modules.
       #
       # For single-user on single-host
-      homeManagerModules.default = import ./module/home-manager.nix self;
+      #homeManagerModules.default = import ./module/home-manager.nix self;
+      homeManagerModules.default = import ./module/home-manager.nix { inherit self; };
       #
       # Support for multi-user and multi-host
-      nixosModules.aggregator = import ./module/nixos-aggregator.nix self;
-      nixosModules.client = import ./module/nixos-client.nix self;
+      #nixosModules.aggregator = import ./module/nixos-aggregator.nix self;
+      #nixosModules.client = import ./module/nixos-client.nix self;
+      nixosModules.aggregator = import ./module/nixos-aggregator.nix { inherit self; };
+      nixosModules.client = import ./module/nixos-client.nix { inherit self; };
     };
 }
