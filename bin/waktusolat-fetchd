@@ -4,34 +4,53 @@
 # Copyright (c) 2026 waktusolat-NajibMalaysia
 # Licensed under the BSD 3-Clause License. See LICENSE file for details.
 #
-#  Singleton daemon: fetch waktu solat from JAKIM, write a canonical,
-#  window-manager-agnostic JSON file. Whether xmonad, Niri, both, or neither
-#  is running has no bearing on this process -- exactly one instance of this
-#  daemon should exist per $USER, guarded by flock below.
+#  Singleton daemon: get waktu solat data for one zone, write a canonical,
+#  window-manager-agnostic JSON file at <data_dir>/<zone>.json.
+#
+#  CHANGED (multi-host support): this now runs in one of two roles,
+#  selected purely by whether WAKTUSOLAT_AGGREGATOR_URL is set:
+#
+#    - "origin" role (WAKTUSOLAT_AGGREGATOR_URL unset): talks to JAKIM
+#      directly, exactly as before. Intended for exactly ONE host on your
+#      network (e.g. nyxora) -- see module/nixos-aggregator.nix.
+#
+#    - "client" role (WAKTUSOLAT_AGGREGATOR_URL set): each cycle, first
+#      tries the aggregator over HTTP; only falls back to a direct JAKIM
+#      fetch if the aggregator is unreachable (e.g. a laptop away from the
+#      home LAN) -- see module/nixos-client.nix. This means every host
+#      except the aggregator itself is a JAKIM client only when it HAS to
+#      be, not by default.
+#
+#  Both roles are still WM-agnostic and still singleton-guarded by flock,
+#  same as before -- multi-host support is additive, not a replacement for
+#  the earlier "don't fetch twice on one host" fix.
 #
 #  by Muhammad Najib Bin Ibrahim <mnajib@gmail.com>
 #
 #  Usage:
 #      waktusolat-fetchd SGR01
-#      waktusolat-fetchd WLY01
 #
-#  Intended to run under `systemd --user` (see module/home-manager.nix),
-#  but can be run directly from a terminal for testing.
+#  Env vars:
+#      WAKTUSOLAT_AGGREGATOR_URL    e.g. http://nyxora:8089 (client role if set)
+#      WAKTUSOLAT_AGGREGATOR_TIMEOUT  seconds, default 3
+#      WAKTUSOLAT_DATA_DIR           default /var/cache/waktusolat
+#      WAKTUSOLAT_LOGLEVEL           SILENT|ERROR|WARN|INFO|DEBUG, default INFO
 
 set -euo pipefail
 
 : "${USER:=$(id -un)}"
 
 # --- source libraries ----------------------------------------------------
-# WAKTUSOLAT_LIB_DIR is set by the Nix wrapper (see flake.nix `wrapProgram`).
-# Fall back to a path relative to this script for running from a checkout.
 LIB_DIR="${WAKTUSOLAT_LIB_DIR:-$(dirname "$(readlink -f "$0")")/../lib}"
 source "${LIB_DIR}/logger.sh"
 source "${LIB_DIR}/jakim-fetch.sh"
+source "${LIB_DIR}/aggregator-client.sh"
 
 # --- config ----------------------------------------------------------------
-LOGLEVEL="${WAKTUSOLAT_LOGLEVEL:-INFO}"   # SILENT|ERROR|WARN|INFO|DEBUG
-LOCKFILE="/tmp/${USER}-waktusolat-fetchd.lock"
+LOGLEVEL="${WAKTUSOLAT_LOGLEVEL:-INFO}"
+AGGREGATOR_URL="${WAKTUSOLAT_AGGREGATOR_URL:-}"        # empty => origin role
+AGGREGATOR_TIMEOUT="${WAKTUSOLAT_AGGREGATOR_TIMEOUT:-3}"
+DATA_DIR="${WAKTUSOLAT_DATA_DIR:-/var/cache/waktusolat}"
 
 zone="${1:-}"
 if [[ -z "$zone" ]]; then
@@ -40,19 +59,24 @@ if [[ -z "$zone" ]]; then
     exit 1
 fi
 
-set_log_file "/tmp/${USER}-waktusolat-fetchd.log"
+mkdir -p "$DATA_DIR"
+init_waktusolat_paths "$zone" "$DATA_DIR"
+
+set_log_file "/tmp/${USER}-waktusolat-fetchd-${zone}.log"
 set_log_level "$LOGLEVEL"
 log_debug "Begin bin/waktusolat-fetchd (zone=${zone})"
+if [[ -n "$AGGREGATOR_URL" ]]; then
+    log_info "Role: client (aggregator=${AGGREGATOR_URL}, timeout=${AGGREGATOR_TIMEOUT}s)"
+else
+    log_info "Role: origin (fetching JAKIM directly)"
+fi
 
-# --- singleton guard -------------------------------------------------------
-# CHANGED from xmonad-config's version: the lock is now taken *before* doing
-# anything else and independent of an "-o hbar" flag -- this script only
-# does one thing, so there is no mode to select. If a second instance is
-# started (e.g. Niri's config also tries to spawn this), it exits cleanly.
+# --- singleton guard (per zone, since a host could run more than one) ------
+LOCKFILE="/tmp/${USER}-waktusolat-fetchd-${zone}.lock"
 exec 9>"$LOCKFILE"
 if ! flock -n 9; then
-    log_info "Another waktusolat-fetchd instance is already running (lock: ${LOCKFILE}). Exiting."
-    echo "waktusolat-fetchd is already running for zone tracking. Exiting." >&2
+    log_info "Another waktusolat-fetchd instance for zone ${zone} is already running. Exiting."
+    echo "waktusolat-fetchd is already running for zone ${zone}. Exiting." >&2
     exit 0
 fi
 
@@ -65,26 +89,24 @@ on_term() {
 trap on_term SIGTERM SIGINT
 
 # --- intervals ---------------------------------------------------------
-INTERVAL_NORMAL=$(( 60 * 60 * 3 ))  # 3 hours: refetch cadence when data is good
-INTERVAL_RETRY=$(( 60 * 1 ))        # 1 minute: refetch cadence after a failed fetch
+INTERVAL_NORMAL=$(( 60 * 60 * 3 ))    # 3h: cadence after a good direct JAKIM fetch
+INTERVAL_RETRY=$(( 60 * 1 ))          # 1m: cadence after a failed direct JAKIM fetch
+INTERVAL_AGGREGATOR=$(( 60 * 5 ))     # 5m: cadence for polling the aggregator -- cheap
+                                       #     LAN call, and lets a traveling host (parang)
+                                       #     re-sync quickly once it's back home.
 
-log_info "waktusolat-fetchd started for zone: ${zone}"
-
-while $running; do
-    log_debug "-------------------------------"
-    log_debug "$(date) : Start fetch cycle"
-
+# do_direct_fetch: the unchanged origin-role pipeline, also used as the
+# client role's fallback when the aggregator can't be reached.
+do_direct_fetch() {
     resetData
     fetchDataZone "$zone"
     extractData
     checkData
     log_debug "ERROR --> ${ERROR}"
 
-    interval=$INTERVAL_NORMAL
     if $ERROR; then
         log_debug "Fetch/parse failed: falling back to last good backup, shortening retry interval"
         resetData
-        interval=$INTERVAL_RETRY
         getOldGoodFetchData
         extractData
     else
@@ -93,11 +115,31 @@ while $running; do
     fi
 
     impure_write_neutral_json
+}
+
+log_info "waktusolat-fetchd started for zone: ${zone} -> ${NEUTRAL_DATA_FILE}"
+
+while $running; do
+    log_debug "-------------------------------"
+    log_debug "$(date) : Start fetch cycle"
+
+    interval=$INTERVAL_NORMAL
+
+    if [[ -n "$AGGREGATOR_URL" ]]; then
+        if impure_try_fetch_from_aggregator "$AGGREGATOR_URL" "$zone" "$AGGREGATOR_TIMEOUT" "$NEUTRAL_DATA_FILE"; then
+            log_info "Data refreshed via aggregator"
+            interval=$INTERVAL_AGGREGATOR
+        else
+            log_info "Aggregator unreachable, falling back to direct JAKIM fetch"
+            do_direct_fetch
+            interval=$( $ERROR && echo "$INTERVAL_RETRY" || echo "$INTERVAL_NORMAL" )
+        fi
+    else
+        do_direct_fetch
+        interval=$( $ERROR && echo "$INTERVAL_RETRY" || echo "$INTERVAL_NORMAL" )
+    fi
 
     log_debug "Sleeping ${interval}s until next fetch cycle"
-    # Sleep in small increments so SIGTERM/SIGINT (from systemd stop, or
-    # Ctrl-C in a terminal) is honoured promptly instead of waiting out a
-    # full 3-hour sleep.
     slept=0
     while $running && (( slept < interval )); do
         sleep 1

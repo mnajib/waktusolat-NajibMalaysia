@@ -29,7 +29,10 @@ source "${LIB_DIR}/format-helpers.sh"
 set_log_file "/tmp/${USER}-waktusolat-render-waybar.log"
 set_log_level "${WAKTUSOLAT_LOGLEVEL:-SILENT}"
 
-NEUTRAL_DATA_FILE="/tmp/${USER}-waktusolat-data.json"
+# CHANGED (multi-host support): see waktusolat-render-xmobar for rationale.
+ZONE="${WAKTUSOLAT_ZONE:-SGR01}"
+DATA_DIR="${WAKTUSOLAT_DATA_DIR:-/var/cache/waktusolat}"
+NEUTRAL_DATA_FILE="${DATA_DIR}/${ZONE}.json"
 
 if [[ ! -s "$NEUTRAL_DATA_FILE" ]]; then
     jq -n '{text:"waktu solat: no data", tooltip:"waktusolat-fetchd has not written any data yet", class:["error"]}'

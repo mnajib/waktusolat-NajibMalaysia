@@ -30,7 +30,14 @@ source "${LIB_DIR}/xmobar-colorize.sh"
 set_log_file "/tmp/${USER}-waktusolat-render-xmobar.log"
 set_log_level "${WAKTUSOLAT_LOGLEVEL:-SILENT}"
 
-NEUTRAL_DATA_FILE="/tmp/${USER}-waktusolat-data.json"
+# CHANGED (multi-host support): NEUTRAL_DATA_FILE is now
+# <WAKTUSOLAT_DATA_DIR>/<WAKTUSOLAT_ZONE>.json instead of a fixed
+# $USER-scoped /tmp path -- this is the same file waktusolat-fetchd writes
+# to, whether it got the data via the aggregator or a direct JAKIM fetch.
+# The renderer doesn't know or care which; it just reads the result.
+ZONE="${WAKTUSOLAT_ZONE:-SGR01}"
+DATA_DIR="${WAKTUSOLAT_DATA_DIR:-/var/cache/waktusolat}"
+NEUTRAL_DATA_FILE="${DATA_DIR}/${ZONE}.json"
 
 if [[ ! -s "$NEUTRAL_DATA_FILE" ]]; then
     echo "<fc=#888888>waktusolat-fetchd: no data yet</fc>"

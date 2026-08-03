@@ -24,9 +24,30 @@ declare -r _JAKIM_FETCH_SH_INCLUDED="true"
 # RENAMED from FILE1/FILE2/FILE3 (old xmonad-config names) to self-describing
 # names. FILE2 (old one-line xmobar-formatted result) is GONE -- that job now
 # belongs to bin/waktusolat-render-xmobar reading NEUTRAL_DATA_FILE.
+#
+# These top-level defaults are single-zone, $USER-scoped, and only meant for
+# waktusolat-cli's simple ad-hoc "just fetch me one zone right now" use.
+# waktusolat-fetchd calls init_waktusolat_paths() below instead, since it
+# needs zone-aware paths (a host may run more than one zone) and a
+# configurable NEUTRAL_DATA_FILE directory (/var/lib on the aggregator host,
+# /var/cache on every other host -- see module/nixos-*.nix).
 RAW_FETCH_FILE="/tmp/${USER}-waktusolat-raw.json"        # was: FILE1
 RAW_BACKUP_FILE="/tmp/${USER}-waktusolat-raw.json.bak"   # was: FILE3
 NEUTRAL_DATA_FILE="/tmp/${USER}-waktusolat-data.json"    # NEW: canonical output, DE-agnostic
+
+# init_waktusolat_paths <zone> <data_dir>
+# Overrides RAW_FETCH_FILE/RAW_BACKUP_FILE/NEUTRAL_DATA_FILE to be specific
+# to <zone>, with the neutral output written under <data_dir>/<zone>.json.
+# Scratch files (raw fetch + backup) stay under /tmp, keyed by zone so two
+# zones running on the same host (or same $USER) don't clobber each other.
+init_waktusolat_paths() {
+    local zone="$1"
+    local data_dir="$2"
+    RAW_FETCH_FILE="/tmp/${USER}-waktusolat-raw-${zone}.json"
+    RAW_BACKUP_FILE="/tmp/${USER}-waktusolat-raw-${zone}.json.bak"
+    NEUTRAL_DATA_FILE="${data_dir}/${zone}.json"
+    log_debug "init_waktusolat_paths: zone=${zone} data_dir=${data_dir} NEUTRAL_DATA_FILE=${NEUTRAL_DATA_FILE}"
+}
 
 # --- Global state (populated by extractData, consumed by checkData /
 # impure_write_neutral_json) ---------------------------------------------

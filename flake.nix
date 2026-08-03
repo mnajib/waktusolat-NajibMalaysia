@@ -62,6 +62,19 @@
         '';
       }
     ) // {
+      #
+      # CHANGED (multi-host support): the per-user home-manager module is
+      # superseded by these two NixOS system modules for any host that
+      # needs to share data across local users and/or participate in the
+      # aggregator/client split. It's kept below for single-user hosts that
+      # don't need any of that, but new setups should prefer the NixOS
+      # modules.
+      #
+      # For single-user on single-host
       homeManagerModules.default = import ./module/home-manager.nix self;
+      #
+      # Support for multi-user and multi-host
+      nixosModules.aggregator = import ./module/nixos-aggregator.nix self;
+      nixosModules.client = import ./module/nixos-client.nix self;
     };
 }
