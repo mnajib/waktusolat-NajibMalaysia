@@ -97,10 +97,10 @@ extractData() {
     log_debug "Start extractData()"
 
     local internal_data
-    internal_data=$(jq -r '.prayerTime[0] | to_entries | .[] | "\(.key),\(.value)"' "$RAW_FETCH_FILE" 2>/dev/null)
+    internal_data=$(jq -r '.prayerTime[0] | to_entries | .[] | "\(.key),\(.value)"' "$RAW_FETCH_FILE" 2>/dev/null || true)
 
     local meta_data
-    meta_data=$(jq -r '"serverTime,\(.serverTime)\nzone,\(.zone)"' "$RAW_FETCH_FILE" 2>/dev/null)
+    meta_data=$(jq -r '"serverTime,\(.serverTime)\nzone,\(.zone)"' "$RAW_FETCH_FILE" 2>/dev/null || true)
 
     if [[ -z "$internal_data" ]]; then
         log_debug "ERROR: jq failed to parse JSON in $RAW_FETCH_FILE"
@@ -167,6 +167,13 @@ doBackup() {
 
 getOldGoodFetchData() {
     log_debug "Start getOldGoodFetchData()"
+    if [[ ! -s "$RAW_BACKUP_FILE" ]]; then
+        # No backup exists yet -- e.g. this is the very first fetch cycle
+        # ever, before any successful fetch has happened. Leave ERROR=true
+        # (already set by the caller) rather than crashing under set -e.
+        log_debug "No backup file at ${RAW_BACKUP_FILE} yet -- nothing to fall back to"
+        return 0
+    fi
     log_debug "Get previous backup fetched source from file ${RAW_BACKUP_FILE}"
     cat "$RAW_BACKUP_FILE" > "$RAW_FETCH_FILE"
     log_debug "End getOldGoodFetchData()"
@@ -211,6 +218,10 @@ impure_write_neutral_json() {
         '{zone:$zone, hijri_date:$hijri_date, gregorian_date:$gregorian_date,
           day:$day, server_time:$server_time, is_stale:$is_stale, prayers:$prayers}' \
         > "$out_tmp"
+
+    # Explicit rather than relying on the process umask -- see the matching
+    # fix in lib/aggregator-client.sh for why this can't be left implicit.
+    chmod 0644 "$out_tmp"
 
     mv "$out_tmp" "$NEUTRAL_DATA_FILE"
 

@@ -31,6 +31,12 @@ impure_try_fetch_from_aggregator() {
 
     local tmp_file
     tmp_file="$(mktemp "${dest_file}.aggfetch.XXXXXX")"
+    # mktemp defaults to 0600, and `mv` below PRESERVES that mode rather
+    # than resetting it -- without this chmod, dest_file ends up
+    # unreadable by any user except the `waktusolat` service account,
+    # defeating the whole "shared by all local users" point of
+    # /var/cache/waktusolat. (Found via a real deployment on `asmak`.)
+    chmod 0644 "$tmp_file"
 
     if ! curl -s --fail --max-time "$timeout" "${base_url}/${zone}.json" -o "$tmp_file" 2>>"$LOG_FILE"; then
         log_debug "Aggregator unreachable or returned a non-2xx response"

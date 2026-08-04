@@ -37,6 +37,7 @@
 #      WAKTUSOLAT_LOGLEVEL           SILENT|ERROR|WARN|INFO|DEBUG, default INFO
 
 set -euo pipefail
+umask 022
 
 : "${USER:=$(id -un)}"
 
