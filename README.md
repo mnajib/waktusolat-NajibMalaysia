@@ -1,45 +1,13 @@
 # waktusolat-NajibMalaysia
 
-JAKIM prayer-time fetcher + status-bar renderers, as a standalone Nix flake.
+A standalone Nix Flake providing a JAKIM prayer-time fetcher daemon (waktusolat-fetchd), status-bar renderers (waktusolat-render-xmobar, waktusolat-render-waybar), and an ad-hoc CLI tool (waktusolat-cli).
 
-Split out of `xmonad-config-NajibMalaysia` so that xmonad and Niri (or any
-other WM) can share **one** fetcher process instead of each running its own
-copy against the JAKIM API.
+Decoupled from window manager configurations (such as xmonad-config-NajibMalaysia) so that multiple WMs (e.g., xmonad, Niri) and multiple hosts across a local network share a unified fetcher architecture without duplicating requests to the JAKIM e-solat API.
 
-## Architecture
+## System Architecture & Data Flow
 
-```
-                         systemd --user
-                  ┌───────────────────────────┐
-                  │ waktusolat-fetchd.service │  <-- ONE instance, WM-agnostic
-                  └────────────┬──────────────┘
-                               │ writes
-                               ▼
-       ┌────────────────────────────────────────────────────────────────┐
-       │   /tmp/$USER-waktusolat-data.json   (neutral JSON, no markup)  │
-       └────────────────────────────────────────────────────────────────┘
-                     ▲                        ▲
-                     │ reads                  │ reads
-        ┌────────────┴───────────┐  ┌─────────┴──────────────┐
-        │ waktusolat-render-     │  │ waktusolat-render-     │
-        │ xmobar                 │  │ waybar                 │
-        └────────────┬───────────┘  └─────────┬──────────────┘
-                     │                        │
-                     ▼                        ▼
-                   xmobar                  Waybar (Niri)
-```
+Data flows top-to-bottom from upstream API sources down to status-bar display tools:
 
-`waktusolat-fetchd` is guarded by `flock` (`/tmp/$USER-waktusolat-fetchd.lock`)
-as a belt-and-braces safety net, but the real fix is that it's started once
-by `systemd --user`, `WantedBy=graphical-session.target` -- neither xmonad
-nor Niri need to spawn or kill it.
-
-## Multi-host setup (NEW)
-
-Instead of every host being its own JAKIM client, exactly ONE host (your
-home server, `nyxora`) fetches from JAKIM and serves the result over your
-LAN. Every other host asks `nyxora` first, and only falls back to fetching
-JAKIM directly if `nyxora` is unreachable (e.g. `parang` away from home).
 
 ```
                             ┌────────────────────────┐
@@ -47,63 +15,113 @@ JAKIM directly if `nyxora` is unreachable (e.g. `parang` away from home).
                             └────────────────────────┘
                                         │
                                         ▼
-                  ┌─────────────────────────────────────────────────────┐
-                  │  nyxora: waktusolat-fetchd (origin role)            │
-                  │  writes -> /var/lib/waktusolat/SGR01.json           │
-                  │  served by Caddy -> http://nyxora:8089/SGR01.json   │
-                  └─────────────────────────────────────────────────────┘
-                                        │
-                                        │ LAN
-                                        │
-        ┌───────────────┬───────────────┼───────────────┐
-        │               │               │               │
-        ▼               ▼               ▼               ▼
-  ┌───────────────┐ ┌──────────────┐ ┌──────────────┐ ┌───────────────────┐
-  │khawlah        │ │parang        │ │bawang        │ │nyxora             │
-  │(client role:  │ │(client role: │ │(client role: │ │(renderers read    │
-  │ask nyxora,    │ │ask nyxora,   │ │ask nyxora,   │ │/var/lib/waktusolat│
-  │fall back to   │ │fall back to  │ │fall back to  │ │directly, no       │
-  │JAKIM if away) │ │JAKIM if away)│ │JAKIM if away)│ │network hop)       │
-  └───────────────┘ └──────────────┘ └──────────────┘ └───────────────────┘
-        │               │               │
-        │               │               │
-        │               │               ▼
-        │               │           ┌────────────────────────────────────────────────────────────────────────────┐
-        │               │           │ /var/cache/waktusolat/SGR01.json  (shared by ALL local users on that host) │
-        │               ▼           └────────────────────────────────────────────────────────────────────────────┘
-        │           ┌────────────────────────────────────────────────────────────────────────────┐
-        │           │ /var/cache/waktusolat/SGR01.json  (shared by ALL local users on that host) │
-        ▼           └────────────────────────────────────────────────────────────────────────────┘
-   ┌────────────────────────────────────────────────────────────────────────────┐
-   │ /var/cache/waktusolat/SGR01.json  (shared by ALL local users on that host) │
-   └────────────────────────────────────────────────────────────────────────────┘
+                      ┌─────────────────────────────────────────────────────────┐
+                      │  nyxora: waktusolat-fetchd (origin role)                │
+                      │  writes -> /var/lib/waktusolat/SGR01.json               │
+                      │  served by Caddy -> http://nyxora:8089/SGR01.json       │
+                      └─────────────────────────────────────────────────────────┘
+                                        ▲                                      ▲
+                                        │                                      │
+                                        │ LAN HTTP                             │
+                                        │                                      │
+        ┌──────────────────────┬────────┴───────────────────┐                  │
+        │                      │                            │                  │
+        │                      │                            │                  │
+  ┌─────┴───────────────┐ ┌────┴───────────┐      ┌─────────┴────────┐         │
+  │khawlah              │ │parang          │      │bawang            │         │
+  │(client role:        │ │(client role:   │      │(client role:     │         │
+  │ask nyxora,          │ │ask nyxora,     │      │ask nyxora,       │         │
+  │fall back to         │ │fall back to    │      │fall back to      │         │
+  │JAKIM if away)       │ │JAKIM if away)  │      │JAKIM if away)    │         │
+  └─────┬───────────────┘ └────┬───────────┘      └────────┬─────────┘         │
+        │                      │                           │                   │
+        │                      │                           │                   │
+        │                      │                           │                   │
+        ▼                      ▼                           ▼                   │
+  ┌─────────────────────┐ ┌─────────────────────┐ ┌─────────────────────┐      │
+  │/var/cache/          │ │/var/cache/          │ │/var/cache/          │      │
+  │waktusolat/SGR01.json│ │waktusolat/SGR01.json│ │waktusolat/SGR01.json│      │
+  │(shared by ALL local │ │(shared by ALL local │ │(shared by ALL local │      │
+  │users on that host)  │ │users on that host)  │ │users on that host)  │      │ Direct Read
+  └─────────────────────┘ └─────────────────────┘ └─────────────────────┘      │ (No network hop)
+        ▲                      ▲                           ▲                   │
+        │                      │                           │                   │
+        │                      │                           │                   │
+  ┌─────┴─────────┐       ┌────┴─────────┐        ┌────────┴───────┐      ┌────┴───────────────┐
+  │Status Bar     │       │Status Bar    │        │Status Bar      │      │nyxora              │
+  │Renderers:     │       │Renderers:    │        │Renderers:      │      │renderers read JSON │
+  │- xmobar       │       │- xmobar      │        │- xmobar        │      │from                │
+  │- waybar       │       │- waybar      │        │- waybar        │      │/var/lib/waktusolat │
+  │- cli          │       │- cli         │        │- cli           │      │directly, no        │
+  └───────────────┘       └──────────────┘        └────────────────┘      │network hop         │
+                                                                          └────────────────────┘
 ```
 
-### On `nyxora` (the aggregator)
+## Host Configuration Options
+
+### 1. Primary LAN Agrregator Node (e.g., `nyxora`)
+
+The primary node fetches prayer times directly from JAKIM, stores the raw neutral JSON data in `/var/lib/waktusolat`, and serves it to local network peers over HTTP via Caddy.
 
 ```nix
+# profiles/nixos/hosts/nyxora/services/waktusolat.nix
+{ config, pkgs, inputs, ... }:
+
+let
+  waktusolatPkgs = inputs.waktusolat.packages.${pkgs.system};
+in
 {
-  imports = [ inputs.waktusolat.nixosModules.aggregator ];
+  imports = [
+    inputs.waktusolat.nixosModules.aggregator
+  ];
+
+  # 1. Enable the origin/aggregator daemon
   services.waktusolatAggregator = {
     enable = true;
     zones = [ "SGR01" ];
     port = 8089;
+    dataDir = "/var/lib/waktusolat";
+    logLevel = "INFO";
+  };
+
+  # 2. Install UI renderers and CLI tool
+  environment.systemPackages = [
+    waktusolatPkgs.render-xmobar
+    waktusolatPkgs.render-waybar
+    waktusolatPkgs.cli
+  ];
+
+  # 3. Export data path for renderers on the aggregator node
+  environment.sessionVariables = {
+    WAKTUSOLAT_DATA_DIR = "/var/lib/waktusolat";
+    WAKTUSOLAT_ZONE = "SGR01";
   };
 }
 ```
 
-### On every other host (`khawlah`, `parang`, `bawang`, ...)
+### 2. Satellite Client Nodes (e.g., `khawlah`, `parang`, `bawang`, ...)
+
+Client hosts request cached prayer data from nyxora over the local network. If `nyxora` is unreachable (e.g., `parang` traveling away from home), the client automatically fails over to fetching directly from JAKIM.
 
 ```nix
+# profiles/nixos/hosts/parang/services/waktusolat.nix
+{ config, pkgs, inputs, ... }:
+
 {
-  imports = [ inputs.waktusolat.nixosModules.client ];
+  imports = [
+    inputs.waktusolat.nixosModules.client
+  ];
+
+  # 1. Enable client daemon with fallback
   services.waktusolatClient = {
     enable = true;
     aggregatorUrl = "http://nyxora:8089";
     zones = [ "SGR01" ];
+    dataDir = "/var/cache/waktusolat";
+    aggregatorTimeout = 3;
   };
 
-  # renderers need to know where to look -- set per-user or system-wide:
+  # 2. Export data path for renderers on satellite nodes
   environment.sessionVariables = {
     WAKTUSOLAT_DATA_DIR = "/var/cache/waktusolat";
     WAKTUSOLAT_ZONE = "SGR01";
@@ -111,19 +129,18 @@ JAKIM directly if `nyxora` is unreachable (e.g. `parang` away from home).
 }
 ```
 
-`parang`'s `waktusolat-fetchd` will happily fetch JAKIM directly whenever
-`nyxora` can't be reached (e.g. traveling) -- no manual intervention needed,
-and it re-syncs with `nyxora` automatically once back on the home LAN
-(aggregator polling interval: 5 minutes).
+### 3. Using with home-manager (single-user / no multi-host, simpler)
 
-## Using with home-manager (single-user / no multi-host, simpler)
+For isolated, single-user desktop setups that do not participate in a multi-host LAN architecture:
 
 ```nix
 {
   inputs.waktusolat.url = "github:NajibMalaysia/waktusolat-NajibMalaysia";
 
   # in your home-manager module list:
-  imports = [ inputs.waktusolat.homeManagerModules.default ];
+  imports = [
+    inputs.waktusolat.homeManagerModules.default
+  ];
 
   services.waktusolat = {
     enable = true;
@@ -133,18 +150,36 @@ and it re-syncs with `nyxora` automatically once back on the home LAN
 }
 ```
 
-## xmobar
+## Environment Variables Reference
 
-Add a `Run Com` to your `.xmobarrc`, polling once a second (interval is in
-tenths of a second, so `10`):
+Renderers and daemons rely on the following environment variables:
+
+| Variable | Description | Default Value |
+|----------|-------------|---------------|
+|`WAKTUSOLAT_DATA_DIR` | Path containing output `<ZONE>.json` files | `/var/cache/waktusolat` |
+|`WAKTUSOLAT_ZONE` | Default JAKIM zone code to read or query | `SGR01` |
+|`WAKTUSOLAT_LIB_DIR` | Directory containing library scripts | Relative script path |
+|`WAKTUSOLAT_LOGLEVEL` | Logging level ( `SILENT`, `ERROR`, `WARN`, `INFO`, `DEBUG` ) | `INFO` |
+
+
+## Status Bar Integrations
+
+### xmobar Integration
+
+Add `waktusolat-render-xmobar` as a `Run Com` plugin in your `.xmobarrc`. Set the polling interval to 10 (1 second) to drive the near-prayer-time blink effect driven by wall-clock parity (`date +%s`):
 
 ```haskell
-Run Com "waktusolat-render-xmobar" [] "waktusolat" 10
+Config {
+    -- ...
+    commands = [
+        Run Com "waktusolat-render-xmobar" [] "waktusolat" 10
+    ],
+    template = "%UnsafeXMonadLog% }{ %waktusolat% | %date%"
+}
+
 ```
 
-Then reference `%waktusolat%` in your `template`.
-
-## Waybar (Niri)
+### Waybar Integration (Niri / Hyprland)
 
 `~/.config/waybar/config.jsonc`:
 
@@ -168,16 +203,25 @@ Then reference `%waktusolat%` in your `template`.
 }
 ```
 
-## Ad-hoc lookup (no daemon needed)
+### Ad-hoc lookup (no daemon needed)
+
+Query formatted prayer times directly in your terminal without invoking a status bar renderer:
 
 ```bash
 waktusolat-cli SGR01
 ```
 
-## Development
+## Development & Testing
+
+Enter the development environment to execute test suites and static analysis tools:
 
 ```bash
+# Enter development shell
 nix develop
+
+# Run Bats unit tests
 bats tests/
+
+# Run ShellCheck on scripts
 shellcheck lib/*.sh bin/*
 ```
