@@ -79,6 +79,7 @@ in
             Type = "simple";
             User = "waktusolat";
             Group = "waktusolat";
+            UMask = "0022"; # <--- Ensures created JSON files are 0644 (world-readable)
             ExecStart = "${waktusolatPackages.fetchd}/bin/waktusolat-fetchd ${zone}";
             Environment = [
               "WAKTUSOLAT_DATA_DIR=${cfg.dataDir}"

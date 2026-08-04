@@ -95,6 +95,7 @@ in
             Type = "simple";
             User = "waktusolat";
             Group = "waktusolat";
+            UMask = "0022"; # Ensures files are created with 0644 permissions (rw-r--r--)
             ExecStart = "${waktusolatPackages.fetchd}/bin/waktusolat-fetchd ${zone}";
             Environment = [
               "WAKTUSOLAT_DATA_DIR=${cfg.dataDir}"
