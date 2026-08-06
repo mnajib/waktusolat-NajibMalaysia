@@ -36,6 +36,7 @@
       {
         packages = {
           fetchd        = mkScript "waktusolat-fetchd";
+          stated        = mkScript "waktusolat-stated";
           render-xmobar = mkScript "waktusolat-render-xmobar";
           render-waybar = mkScript "waktusolat-render-waybar";
           cli           = mkScript "waktusolat-cli";
