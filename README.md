@@ -1,12 +1,65 @@
 # waktusolat-NajibMalaysia
 
-A standalone Nix Flake providing a JAKIM prayer-time fetcher daemon (waktusolat-fetchd), status-bar renderers (waktusolat-render-xmobar, waktusolat-render-waybar), and an ad-hoc CLI tool (waktusolat-cli).
+JAKIM Prayer Time Aggregator, Client & State Formatter
 
-Decoupled from window manager configurations (such as xmonad-config-NajibMalaysia) so that multiple WMs (e.g., xmonad, Niri) and multiple hosts across a local network share a unified fetcher architecture without duplicating requests to the JAKIM e-solat API.
+## OVERVIEW
 
-## System Architecture & Data Flow
+waktusolat-NajibMalaysia is a unified, modular NixOS suite designed to fetch,
+aggregate, and format JAKIM e-solat prayer times for desktop status bars
+(`xmobar`, `Waybar`) and CLI environments.
 
-Data flows top-to-bottom from upstream API sources down to status-bar display tools:
+To minimize WAN traffic and prevent redundant API queries to JAKIM, the system
+supports a 2-tier architecture (Aggregator and Client). All 1-second state
+updates for desktop status bars are written strictly to RAM disk (`tmpfs`) to
+prevent SSD wear.
+
+## KEY FEATURES & OPTIMIZATION HIGHLIGHTS
+
+1. Zero SSD Wear (RAM Disk Engine)
+   - All continuous 1-second state updates (JSON, CLI, xmobar TXT, Waybar HTML) 
+     are written strictly to RAM disk (`tmpfs` at `/run/waktusolat/`).
+   - The primary prayer data on physical disk is only updated when new schedules 
+     are fetched (typically once per day), eliminating continuous disk write 
+     cycles and preserving drive longevity.
+
+2. Efficient LAN Aggregation
+   - `nyxora` acts as the single primary origin node, fetching directly from 
+     JAKIM e-solat.
+   - Client workstation nodes (`asmak`, `khawlah`, etc.) query `nyxora` over HTTP, 
+     drastically reducing external WAN queries and preventing redundant API traffic.
+
+3. Seamless Offline / WAN Fallback
+   - Client fetchers automatically fall back to direct JAKIM API calls if the 
+     LAN aggregator is unreachable (e.g., laptop traveling outside the home LAN).
+
+4. Pure Declarative NixOS Architecture
+   - Unified `services.waktusolat.*` options automatically configure systemd units, 
+     file paths, and local web servers without requiring complex symlinks or 
+     manual path handling.
+
+## Architecture & Data Flow
+
+### [RoleType-1: Aggregator Node (e.g., `nyxora`)]
+  1. `systemd` service (`waktusolat-fetch-<zone>`) fetches prayer data from JAKIM.
+  2. Saves master JSON to: `/var/lib/waktusolat/<ZONE>.json`
+  3. Built-in Python 3 HTTP server exposes data on LAN:
+     `http://<aggregator-host>:8089/<ZONE>.json`
+
+### [RoleType-2: Client Node (e.g., `asmak`)]
+  1. `systemd` service (`waktusolat-fetch-<zone>`) attempts LAN fetch from
+     Aggregator first (`http://nyxora:8089`).
+  2. Falls back to direct JAKIM fetch if the Aggregator is unreachable.
+  3. Writes persistent local cache to: `/var/cache/waktusolat/<ZONE>.json`
+  4. `systemd` service (`waktusolat-reminder-<zone>`) reads local cache every
+     second and updates `tmpfs`:
+     - `/run/waktusolat/reminder.json`
+     - `/run/waktusolat/reminder.cli`
+     - `/run/waktusolat/reminder.txt`   (xmobar markup)
+     - `/run/waktusolat/reminder.html`  (Waybar / Pango markup)
+
+### [UI Layer (xmobar / Waybar)]
+  - Status bars perform a lightweight 'cat' on `/run/waktusolat/reminder.{txt,html}`
+    every second.
 
 
 ```
@@ -15,87 +68,126 @@ Data flows top-to-bottom from upstream API sources down to status-bar display to
                             └────────────────────────┘
                                         │
                                         ▼
-                      ┌─────────────────────────────────────────────────────────┐
-                      │  nyxora: waktusolat-fetchd (origin role)                │
-                      │  writes -> /var/lib/waktusolat/SGR01.json               │
-                      │  served by Caddy -> http://nyxora:8089/SGR01.json       │
-                      └─────────────────────────────────────────────────────────┘
-                                        ▲                                      ▲
-                                        │                                      │
-                                        │ LAN HTTP                             │
-                                        │                                      │
-        ┌──────────────────────┬────────┴───────────────────┐                  │
-        │                      │                            │                  │
-        │                      │                            │                  │
-  ┌─────┴───────────────┐ ┌────┴───────────┐      ┌─────────┴────────┐         │
-  │khawlah              │ │parang          │      │bawang            │         │
-  │(client role:        │ │(client role:   │      │(client role:     │         │
-  │ask nyxora,          │ │ask nyxora,     │      │ask nyxora,       │         │
-  │fall back to         │ │fall back to    │      │fall back to      │         │
-  │JAKIM if away)       │ │JAKIM if away)  │      │JAKIM if away)    │         │
-  └─────┬───────────────┘ └────┬───────────┘      └────────┬─────────┘         │
-        │                      │                           │                   │
-        │                      │                           │                   │
-        │                      │                           │                   │
-        ▼                      ▼                           ▼                   │
-  ┌─────────────────────┐ ┌─────────────────────┐ ┌─────────────────────┐      │
-  │/var/cache/          │ │/var/cache/          │ │/var/cache/          │      │
-  │waktusolat/SGR01.json│ │waktusolat/SGR01.json│ │waktusolat/SGR01.json│      │
-  │(shared by ALL local │ │(shared by ALL local │ │(shared by ALL local │      │
-  │users on that host)  │ │users on that host)  │ │users on that host)  │      │ Direct Read
-  └─────────────────────┘ └─────────────────────┘ └─────────────────────┘      │ (No network hop)
-        ▲                      ▲                           ▲                   │
-        │                      │                           │                   │
-        │                      │                           │                   │
-  ┌─────┴─────────┐       ┌────┴─────────┐        ┌────────┴───────┐      ┌────┴───────────────┐
-  │Status Bar     │       │Status Bar    │        │Status Bar      │      │nyxora              │
-  │Renderers:     │       │Renderers:    │        │Renderers:      │      │renderers read JSON │
-  │- xmobar       │       │- xmobar      │        │- xmobar        │      │from                │
-  │- waybar       │       │- waybar      │        │- waybar        │      │/var/lib/waktusolat │
-  │- cli          │       │- cli         │        │- cli           │      │directly, no        │
-  └───────────────┘       └──────────────┘        └────────────────┘      │network hop         │
-                                                                          └────────────────────┘
+                      ┌──────────────────────────────────────────────────────────┐
+                      │      Server/Aggregator Node                              │
+                      │                                                          │
+                      │  1. waktusolat-fetch-SGR01 service pulls data from JAKIM.│
+                      │  2. Writes -> /var/lib/waktusolat/SGR01.json             │
+                      │     • Storage Media: Disk (NVMe / SSD)                   │
+                      │     • Write Cadence: ~1x / day (On schedule fetch)       │
+                      │     • Reason: Persistent primary storage for LAN service │
+                      │  3. Served via Python 3 -> http://nyxora:8089/SGR01.json │
+                      │                                                          │
+                      │  Local Reminder Loop (Direct local read):                │
+                      │  waktusolat-reminder-SGR01                               │
+                      └──────────────────────────────────────────────────────────┘
+                                        ▲
+                                        │
+                                        │ LAN HTTP
+                                        │ (Fallback: Direct WAN to JAKIM API)
+                                        │
+                               ┌─────────────────┐
+                               │   Client Node   │
+                               └────────┬────────┘
+                                        │
+                                        ▼
+                           ┌─────────────────────────┐
+                           │ Persistent Local Cache  │
+                           │ /var/cache/waktusolat/  │
+                           │ SGR01.json              │
+                           └────────────┬────────────┘
+                                        │ • Storage Media: Disk (NVMe / SSD)
+                                        │ • Write Cadence: ~1x / day
+                                        │ • Reason: Offline resilience across reboots
+                                        │
+                                        ▼
+                           ┌─────────────────────────┐
+                           │ waktusolat-reminder     │
+                           │ (Per-Second State Loop) │
+                           │ Reads JSON into memory  │
+                           └────────────┬────────────┘
+                                        │
+                                        ▼
+    ┌───────────────────────────────────────────────────────────────────────┐
+    │ RAM Disk (tmpfs)                                                      │
+    │ /run/waktusolat/                                                      │
+    │ - reminder.json                                                       │
+    │ - reminder.cli                                                        │
+    │ - reminder.txt (xmobar)                                               │
+    │ - reminder.html (waybar)                                              │
+    ├───────────────────────────────────────────────────────────────────────┤
+    │ • Storage Media: RAM Disk (tmpfs)                                     │
+    │ • Write Cadence: Every 1 second                                       │
+    │ • Reason: ZERO SSD wear for high-frequency status bar updates         │
+    └───────────────────────────────────┬───────────────────────────────────┘
+                                        │
+                                        ▼
+                           ┌─────────────────────────┐
+                           │ Status Bar Renderers    │
+                           │ - xmobar (cat .txt)     │
+                           │ - waybar (cat .html)    │
+                           │ - cli    (cat .cli)     │
+                           └─────────────────────────┘
 ```
+
 
 ## Host Configuration Options
 
-### 1. Primary LAN Agrregator Node (e.g., `nyxora`)
+### 1. Primary LAN Aggregator Node (e.g., `nyxora`)
 
-The primary node fetches prayer times directly from JAKIM, stores the raw neutral JSON data in `/var/lib/waktusolat`, and serves it to local network peers over HTTP via Caddy.
+The primary node fetches prayer times directly from JAKIM, stores the raw neutral JSON data in `/var/lib/waktusolat`, and serves it to local network peers over HTTP via Python 3 HTTP server.
 
 ```nix
 # profiles/nixos/hosts/nyxora/services/waktusolat.nix
 { config, pkgs, inputs, ... }:
 
-let
-  waktusolatPkgs = inputs.waktusolat.packages.${pkgs.system};
-in
+#let
+#  waktusolatPkgs = inputs.waktusolat.packages.${pkgs.system};
+#in
 {
   imports = [
-    inputs.waktusolat.nixosModules.aggregator
+    #inputs.waktusolat.nixosModules.aggregator
+    #
+    # Import the (new) unified module in your NixOS configuration:
+    inputs.waktusolat.nixosModules.default
   ];
 
   # 1. Enable the origin/aggregator daemon
-  services.waktusolatAggregator = {
+  #services.waktusolatAggregator = {
+  #  enable = true;
+  #  zones = [ "SGR01" ];
+  #  port = 8089;
+  #  dataDir = "/var/lib/waktusolat";
+  #  logLevel = "INFO";
+  #};
+  #
+  # 2. Install UI renderers and CLI tool
+  #environment.systemPackages = [
+  #  waktusolatPkgs.render-xmobar
+  #  waktusolatPkgs.render-waybar
+  #  waktusolatPkgs.cli
+  #];
+  #
+  # 3. Export data path for renderers on the aggregator node
+  #environment.sessionVariables = {
+  #  WAKTUSOLAT_DATA_DIR = "/var/lib/waktusolat";
+  #  WAKTUSOLAT_ZONE = "SGR01";
+  #};
+
+  services.waktusolat = {
     enable = true;
     zones = [ "SGR01" ];
-    port = 8089;
-    dataDir = "/var/lib/waktusolat";
-    logLevel = "INFO";
+    dataDir = "/var/cache/waktusolat";
+    reminder.enable = true;
+
+    aggregator = {
+      enable = true;
+      port = 8089;
+      openFirewallPort = true;
+      dataDir = "/var/lib/waktusolat";
+    };
   };
 
-  # 2. Install UI renderers and CLI tool
-  environment.systemPackages = [
-    waktusolatPkgs.render-xmobar
-    waktusolatPkgs.render-waybar
-    waktusolatPkgs.cli
-  ];
-
-  # 3. Export data path for renderers on the aggregator node
-  environment.sessionVariables = {
-    WAKTUSOLAT_DATA_DIR = "/var/lib/waktusolat";
-    WAKTUSOLAT_ZONE = "SGR01";
-  };
 }
 ```
 
@@ -109,29 +201,43 @@ Client hosts request cached prayer data from nyxora over the local network. If `
 
 {
   imports = [
-    inputs.waktusolat.nixosModules.client
+    #inputs.waktusolat.nixosModules.client
+    #
+    #Import the unified module in your NixOS configuration:
+    inputs.waktusolat.nixosModules.default
   ];
 
   # 1. Enable client daemon with fallback
-  services.waktusolatClient = {
+  #services.waktusolatClient = {
+  #  enable = true;
+  #  aggregatorUrl = "http://nyxora:8089";
+  #  zones = [ "SGR01" ];
+  #  dataDir = "/var/cache/waktusolat";
+  #  aggregatorTimeout = 3;
+  #};
+  #
+  # 2. Export data path for renderers on satellite nodes
+  #environment.sessionVariables = {
+  #  WAKTUSOLAT_DATA_DIR = "/var/cache/waktusolat";
+  #  WAKTUSOLAT_ZONE = "SGR01";
+  #};
+
+  services.waktusolat = {
     enable = true;
     aggregatorUrl = "http://nyxora:8089";
+    aggregatorTimeout = 3;            # Seconds before direct internet fallback
     zones = [ "SGR01" ];
     dataDir = "/var/cache/waktusolat";
-    aggregatorTimeout = 3;
+
+    reminder.enable = true;          # Enables per-second /run/waktusolat/ daemon
   };
 
-  # 2. Export data path for renderers on satellite nodes
-  environment.sessionVariables = {
-    WAKTUSOLAT_DATA_DIR = "/var/cache/waktusolat";
-    WAKTUSOLAT_ZONE = "SGR01";
-  };
 }
 ```
 
 ### 3. Using with home-manager (single-user / no multi-host, simpler)
 
-For isolated, single-user desktop setups that do not participate in a multi-host LAN architecture:
+For isolated, single-user desktop setups that do not participate in a multi-host LAN architecture, operating in user-session space:
 
 ```nix
 {
@@ -146,11 +252,36 @@ For isolated, single-user desktop setups that do not participate in a multi-host
     enable = true;
     zone = "SGR01";
     logLevel = "INFO";
+
+    # Disable fetcher if system-level NixOS client/aggregator is active
+    fetcher.enable = false;
+    reminder.enable = true;
   };
 }
 ```
 
-## Environment Variables Reference
+## Summary
+
+### Directory & Storage Summary
+
+| Directories | Description |
+|---------------------------|---------------------------------------------------------|
+|`/var/lib/waktusolat/`|          Aggregator primary persistent storage (Disk)|
+|`/var/cache/waktusolat/` |        Client local persistent cache (Disk)|
+|`/run/waktusolat/` |              System-level 1-second state files (RAM / tmpfs)|
+|`/run/user/<UID>/waktusolat/`|   User-level 1-second state files (RAM / tmpfs)|
+
+### Binaries & Utilities
+
+| Tools | Description |
+|---------------------------|---------------------------------------------------------|
+| `waktusolat-fetchd`         | Fetcher daemon (LAN aggregator primary, JAKIM fallback) |
+| `waktusolat-reminder`       |    1-second loop state formatter (JSON, CLI, TXT, HTML) |
+| `waktusolat-cli`             |   CLI tool to display prayer times directly in shell |
+| `waktusolat-render-xmobar`    |  xmobar renderer wrapper |
+| `waktusolat-render-waybar`     | Waybar renderer wrapper |
+
+### Environment Variables Reference
 
 Renderers and daemons rely on the following environment variables:
 
@@ -161,46 +292,69 @@ Renderers and daemons rely on the following environment variables:
 |`WAKTUSOLAT_LIB_DIR` | Directory containing library scripts | Relative script path |
 |`WAKTUSOLAT_LOGLEVEL` | Logging level ( `SILENT`, `ERROR`, `WARN`, `INFO`, `DEBUG` ) | `INFO` |
 
-
 ## Status Bar Integrations
+
+Because the system-level state daemon continuously updates files in RAM disk (`/run/waktusolat/`),
+status bar configurations can simply read these files directly with virtually zero CPU overhead.
 
 ### xmobar Integration
 
-Add `waktusolat-render-xmobar` as a `Run Com` plugin in your `.xmobarrc`. Set the polling interval to 10 (1 second) to drive the near-prayer-time blink effect driven by wall-clock parity (`date +%s`):
+Use a CommandReader or PipeReader to display formatted text:
+
+`~/.config/xmobar/xmobar.hs`:
 
 ```haskell
 Config {
     -- ...
     commands = [
-        Run Com "waktusolat-render-xmobar" [] "waktusolat" 10
+        --Run Com "waktusolat-render-xmobar" [] "waktusolat" 10
+
+        -- Reads the pre-formatted xmobar string from tmpfs every second
+        Run CommandReader "cat /run/waktusolat/reminder.txt" "waktusolat"
     ],
-    template = "%UnsafeXMonadLog% }{ %waktusolat% | %date%"
+    --template = "%UnsafeXMonadLog% }{ %waktusolat% | %date%"
+    template = " %Unset% | %waktusolat% | %date% "
 }
 
 ```
 
 ### Waybar Integration (Niri / Hyprland)
 
+Use a custom module running in continuous script execution mode.
+
 `~/.config/waybar/config.jsonc`:
 
 ```jsonc
 "custom/waktusolat": {
-    "exec": "waktusolat-render-waybar",
+    //"exec": "waktusolat-render-waybar",
+    //"exec": "cat /run/waktusolat/reminder.html",
+    "exec": "cat /run/waktusolat/reminder.json",
     "return-type": "json",
-    "interval": 30,
+    "interval": 1, // 30, // 1 seconds for blinking effect
     "tooltip": true
 }
 ```
 
-`~/.config/waybar/style.css`:
+Or, if using the pre-formatted plain Pango markup output:
 
-```css
-#custom-waktusolat.near {
-    color: #ffbf00;
-}
-#custom-waktusolat.stale {
-    color: #ff3333;
-}
+```Pango
+  "custom/waktusolat": {
+    //"exec": "cat /run/waktusolat/reminder.txt",
+    "exec": "cat /run/waktusolat/reminder.html",
+    "interval": 1
+  }
+```
+
+### Generic / Polybar / dwmbar Configuration
+
+For simple bar scripts or Polybar `custom/script` modules:
+
+```
+[module/waktusolat]
+  type = custom/script
+  exec = cat /run/waktusolat/reminder.cli
+  interval = 1
+  tail = false
 ```
 
 ### Ad-hoc lookup (no daemon needed)
@@ -209,6 +363,22 @@ Query formatted prayer times directly in your terminal without invoking a status
 
 ```bash
 waktusolat-cli SGR01
+```
+
+## VERIFICATION & DIAGNOSTICS
+
+```Bash
+Check fetcher service status:
+  $ systemctl status waktusolat-fetch-SGR01.service
+
+Check HTTP aggregator status (on aggregator node):
+  $ systemctl status waktusolat-http-server.service
+
+Check reminder formatter status:
+  $ systemctl status waktusolat-reminder-SGR01.service
+
+Monitor real-time state updates in tmpfs:
+  $ watch -n 1 cat /run/waktusolat/reminder.txt
 ```
 
 ## Development & Testing

@@ -3,19 +3,9 @@
 
 # module/nixos-client.nix
 #
-# NEW. Enable this on every host EXCEPT the aggregator (khawlah, parang,
-# bawang, ...). Runs waktusolat-fetchd in "client" role: each cycle it asks
-# the aggregator over the LAN first, and only falls back to a direct JAKIM
-# fetch if the aggregator can't be reached -- e.g. parang away from the
-# home network. Either way, the result lands in the same
-# <dataDir>/<zone>.json, so waktusolat-render-xmobar/-waybar don't need to
-# know which path was taken.
-#
-# Also a NixOS system module rather than home-manager, for the same reason
-# as nixos-aggregator.nix: the data should be shared by every local Unix
-# user on the host, not scoped to one user's session.
+# Enable this on every host EXCEPT the aggregator (khawlah, parang,
+# bawang, ...). Runs waktusolat-fetchd in "client" role.
 
-with lib;
 let
   cfg = config.services.waktusolatClient;
   system = pkgs.system;
@@ -23,57 +13,62 @@ let
 in
 {
   options.services.waktusolatClient = {
-    enable = mkEnableOption "waktusolat-fetchd client role: prefers the LAN aggregator, falls back to JAKIM directly";
+    #enable = lib.mkEnableOption "waktusolat-fetchd client role";
+    enable = lib.mkEnableOption "Waktu Solat Client Service (RoleType-2)";
 
-    aggregatorUrl = mkOption {
-      type = types.str;
+    reminder = {
+      enable = lib.mkEnableOption "system-wide waktusolat-reminder daemon (outputs to /run/waktusolat/)";
+    };
+
+    aggregatorUrl = lib.mkOption {
+      type = lib.types.str;
       example = "http://nyxora:8089";
-      description = "Base URL of the waktusolat-aggregator instance on your LAN.";
+      #description = "Base URL of the waktusolat-aggregator instance on your LAN.";
+      description = "RoleType-1 Aggregator HTTP URL.";
     };
 
-    aggregatorTimeout = mkOption {
-      type = types.ints.positive;
+    aggregatorTimeout = lib.mkOption {
+      type = lib.types.ints.positive;
       default = 3;
-      description = ''
-        Seconds to wait for the aggregator before falling back to a direct
-        JAKIM fetch. Keep this short -- it's on the hot path of every fetch
-        cycle, and a host that's genuinely away from the LAN (e.g. parang
-        traveling) should fail over quickly rather than stall.
-      '';
+      description = "Seconds to wait for the aggregator before falling back.";
     };
 
-    zones = mkOption {
-      type = types.listOf types.str;
+    zones = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
       default = [ "SGR01" ];
-      description = "JAKIM zone codes this host needs. One fetchd instance runs per zone.";
+      description = "JAKIM zone codes this host needs. One fetchd and reminder instance runs per zone.";
     };
 
-    dataDir = mkOption {
-      type = types.path;
+    #dataDir = lib.mkOption {
+    #  type = lib.types.path;
+    #  default = "/var/cache/waktusolat";
+    #  description = "Directory holding <zone>.json files.";
+    #};
+    #
+    cacheDir = lib.mkOption {
+      type = lib.types.path;
       default = "/var/cache/waktusolat";
-      description = ''
-        Directory holding <zone>.json files, world-readable so every local
-        user's xmobar/Waybar renderer can read it regardless of which Unix
-        user is running the bar.
-      '';
+      description = "Local cache directory for persistent storage.";
     };
 
-    logLevel = mkOption {
-      type = types.enum [ "SILENT" "ERROR" "WARN" "INFO" "DEBUG" ];
+    logLevel = lib.mkOption {
+      type = lib.types.enum [ "SILENT" "ERROR" "WARN" "INFO" "DEBUG" ];
       default = "INFO";
     };
   };
 
-  config = mkIf cfg.enable {
+  config = lib.mkIf cfg.enable {
     users.users.waktusolat = {
       isSystemUser = true;
       group = "waktusolat";
-      home = cfg.dataDir;
+      #home = cfg.dataDir;
+      home = cfg.cacheDir;
     };
     users.groups.waktusolat = { };
 
     systemd.tmpfiles.rules = [
-      "d ${cfg.dataDir} 0755 waktusolat waktusolat -"
+      #"d ${cfg.dataDir} 0755 waktusolat waktusolat -"
+      "d ${cfg.cacheDir} 0755 waktusolat waktusolat -"
     ];
 
     environment.systemPackages = [
@@ -82,11 +77,15 @@ in
       waktusolatPackages.cli
     ];
 
-    systemd.services = listToAttrs (map
-      (zone: {
-        name = "waktusolat-fetchd-${zone}";
+    systemd.services =
+      # 1. Map the Fetcher Daemons
+      # 1. Fetcher & Cache Writer (LAN HTTP -> Fallback Internet -> /var/cache/waktusolat/)
+      (lib.listToAttrs (map (zone: {
+        #name = "waktusolat-fetchd-${zone}";
+        name = "waktusolat-client-fetch-${zone}";
         value = {
-          description = "waktusolat-fetchd (client role, zone ${zone})";
+          #description = "waktusolat-fetchd (client role, zone ${zone})";
+          description = "Waktu Solat Client Fetcher (${zone})";
           after = [ "network-online.target" ];
           wants = [ "network-online.target" ];
           wantedBy = [ "multi-user.target" ];
@@ -95,10 +94,11 @@ in
             Type = "simple";
             User = "waktusolat";
             Group = "waktusolat";
-            UMask = "0022"; # Ensures files are created with 0644 permissions (rw-r--r--)
+            UMask = "0022";
             ExecStart = "${waktusolatPackages.fetchd}/bin/waktusolat-fetchd ${zone}";
             Environment = [
-              "WAKTUSOLAT_DATA_DIR=${cfg.dataDir}"
+              #"WAKTUSOLAT_DATA_DIR=${cfg.dataDir}"
+              "WAKTUSOLAT_DATA_DIR=${cfg.cacheDir}"
               "WAKTUSOLAT_AGGREGATOR_URL=${cfg.aggregatorUrl}"
               "WAKTUSOLAT_AGGREGATOR_TIMEOUT=${toString cfg.aggregatorTimeout}"
               "WAKTUSOLAT_LOGLEVEL=${cfg.logLevel}"
@@ -107,14 +107,34 @@ in
             RestartSec = 10;
           };
         };
-      })
-      cfg.zones);
+      }) cfg.zones))
 
-    # NOTE: renderers read WAKTUSOLAT_DATA_DIR / WAKTUSOLAT_ZONE from the
-    # environment. Since renderers are invoked per-user by xmobar/Waybar
-    # (not as a systemd service), set these in the user's session, e.g. in
-    # home-manager's `home.sessionVariables`:
-    #   WAKTUSOLAT_DATA_DIR = "/var/cache/waktusolat";
-    #   WAKTUSOLAT_ZONE = "SGR01";
+      //
+
+      # 2. Map the Reminder Daemons (If Enabled)
+      # 2. Per-second tmpfs State Formatter (Reads /var/cache/ -> Writes /run/waktusolat/)
+      (lib.listToAttrs (map (zone: {
+        name = "waktusolat-reminder-${zone}";
+        value = {
+          #description = "waktusolat-reminder (system role, zone ${zone})";
+          description = "Waktu Solat State Formatter (${zone})";
+          wantedBy = [ "multi-user.target" ];
+
+          serviceConfig = {
+            Type = "simple";
+            # Runs in system mode targeting /run/waktusolat/
+            ExecStart = "${waktusolatPackages.reminder}/bin/waktusolat-reminder --mode system --zone ${zone}";
+            Restart = "always";
+            RestartSec = "3";
+            RuntimeDirectory = "waktusolat"; # Mounts /run/waktusolat in tmpfs
+
+            # Use DynamicUser for security since it only writes to tmpfs
+            DynamicUser = true;
+            NoNewPrivileges = true;
+            ProtectSystem = "strict";
+            ProtectHome = true;
+          };
+        };
+      }) (if cfg.reminder.enable then cfg.zones else [])));
   };
 }

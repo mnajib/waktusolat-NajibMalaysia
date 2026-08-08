@@ -15,7 +15,7 @@
 # local user on the host, not scoped to whichever user happened to log in
 # first.
 
-with lib;
+#with lib;
 let
   cfg = config.services.waktusolatAggregator;
   system = pkgs.system;
@@ -23,28 +23,31 @@ let
 in
 {
   options.services.waktusolatAggregator = {
-    enable = mkEnableOption "waktusolat-aggregator: the single JAKIM-facing fetcher + LAN HTTP server for this network";
+    #enable = mkEnableOption "waktusolat-aggregator: the single JAKIM-facing fetcher + LAN HTTP server for this network";
+    enable = lib.mkEnableOption "Waktu Solat Aggregator Service (RoleType-1)";
 
-    zones = mkOption {
-      type = types.listOf types.str;
+    port = lib.mkOption {
+      type = lib.types.port;
+      default = 8089;
+      #description = "Port Caddy listens on for serving <zone>.json files.";
+      description = "HTTP port to serve prayer JSON on LAN.";
+    };
+
+    dataDir = lib.mkOption {
+      type = lib.types.path;
+      default = "/var/lib/waktusolat";
+      #description = "Directory holding <zone>.json files, served read-only over HTTP.";
+      description = "Primary storage for aggregated JSON files.";
+    };
+
+    zones = lib.mkOption {
+      type = lib.types.listOf types.str;
       default = [ "SGR01" ];
       example = [ "SGR01" "WLY01" ];
       description = ''
         JAKIM zone codes to fetch and serve. One waktusolat-fetchd instance
         (origin role) runs per zone listed here.
       '';
-    };
-
-    port = mkOption {
-      type = types.port;
-      default = 8089;
-      description = "Port Caddy listens on for serving <zone>.json files.";
-    };
-
-    dataDir = mkOption {
-      type = types.path;
-      default = "/var/lib/waktusolat";
-      description = "Directory holding <zone>.json files, served read-only over HTTP.";
     };
 
     logLevel = mkOption {
@@ -66,9 +69,11 @@ in
     ];
 
     # One origin-role fetchd instance per configured zone.
-    systemd.services = listToAttrs (map
+    # 1. Fetcher Service (Pulls from Internet -> /var/lib/waktusolat/)
+    systemd.services = lib.listToAttrs (map
       (zone: {
-        name = "waktusolat-fetchd-${zone}";
+        #name = "waktusolat-fetchd-${zone}";
+        name = "waktusolat-aggregator-fetch-${zone}";
         value = {
           description = "waktusolat-fetchd (origin role, zone ${zone})";
           after = [ "network-online.target" ];
@@ -101,6 +106,22 @@ in
         header Cache-Control "no-cache"
       '';
     };
+    #
+    # 2. HTTP Server Service (Serves http://<host>:<port>/<zone>.json)
+    #systemd.services.waktusolat-http-server = {
+    #  description = "Waktu Solat HTTP Aggregator Server";
+    #  after = [ "network.target" ];
+    #  wantedBy = [ "multi-user.target" ];
+    #
+    #  serviceConfig = {
+    #    Type = "simple";
+    #    User = "waktusolat";
+    #    Group = "waktusolat";
+    #    ExecStart = "${pkgs.python3}/bin/python3 -m http.server ${toString cfg.port} --directory ${cfg.dataDir}";
+    #    Restart = "always";
+    #    RestartSec = 5;
+    #  };
+    #};
 
     networking.firewall.allowedTCPPorts = [ cfg.port ];
   };

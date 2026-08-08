@@ -15,7 +15,15 @@
         # curl  : HTTP fetch from JAKIM e-solat API
         # jq    : JSON parsing/building (neutral data file is JSON)
         # util-linux : provides `flock`, used by waktusolat-fetchd's singleton guard
-        runtimeDeps = with pkgs; [ curl jq coreutils gawk gnused util-linux ];
+        runtimeDeps = with pkgs; [
+          curl
+          jq
+          coreutils
+          gawk
+          gnused
+          util-linux
+          python3
+        ];
 
         mkScript = name: pkgs.stdenv.mkDerivation {
           pname = name;
@@ -36,7 +44,8 @@
       {
         packages = {
           fetchd        = mkScript "waktusolat-fetchd";
-          stated        = mkScript "waktusolat-stated";
+          #stated       = mkScript "waktusolat-stated";
+          reminder      = mkScript "waktusolat-reminder";
           render-xmobar = mkScript "waktusolat-render-xmobar";
           render-waybar = mkScript "waktusolat-render-waybar";
           cli           = mkScript "waktusolat-cli";
@@ -52,6 +61,10 @@
             type = "app";
             program = "${self.packages.${system}.fetchd}/bin/waktusolat-fetchd";
           };
+          reminder = {
+            type = "app";
+            program = "${self.packages.${system}.reminder}/bin/waktusolat-reminder";
+          };
         };
 
         checks.bats = pkgs.runCommand "waktusolat-bats-tests" {
@@ -63,6 +76,7 @@
         '';
       }
     ) // {
+
       #
       # CHANGED (multi-host support): the per-user home-manager module is
       # superseded by these two NixOS system modules for any host that
@@ -71,14 +85,49 @@
       # don't need any of that, but new setups should prefer the NixOS
       # modules.
       #
-      # For single-user on single-host
-      #homeManagerModules.default = import ./module/home-manager.nix self;
-      homeManagerModules.default = import ./module/home-manager.nix { inherit self; };
-      #
       # Support for multi-user and multi-host
       #nixosModules.aggregator = import ./module/nixos-aggregator.nix self;
       #nixosModules.client = import ./module/nixos-client.nix self;
-      nixosModules.aggregator = import ./module/nixos-aggregator.nix { inherit self; };
-      nixosModules.client = import ./module/nixos-client.nix { inherit self; };
+      #nixosModules.aggregator = import ./module/nixos-aggregator.nix { inherit self; };
+      #nixosModules.client = import ./module/nixos-client.nix { inherit self; };
+      #
+      # For single-user on single-host
+      #homeManagerModules.default = import ./module/home-manager.nix self;
+      #homeManagerModules.default = import ./module/home-manager.nix { inherit self; };
+
+      # NixOS Module exports (Unified)
+      nixosModules = {
+        # Primary unified module containing all options (services.waktusolat.*)
+        default = import ./module/nixos.nix { inherit self; };
+        waktusolat = import ./module/nixos.nix { inherit self; };
+
+        ## Backwards-compatibility aliases (both map to the unified module)
+        #aggregator = import ./module/nixos.nix { inherit self; };
+        #client     = import ./module/nixos.nix { inherit self; };
+        #
+        # Better software design by using reference instead of re-import
+        # Backward-compatibility aliases pointing to the unified module:
+        aggregator = self.nixosModules.default;
+        client     = self.nixosModules.default;
+        #
+
+      };
+      #
+      # Best practice refinement, better software design, toward similar result
+      #nixosModules = rec {
+      #  default = import ./module/nixos.nix { inherit self; };
+      #
+      #  # Aliases pointing to the unified default module
+      #  waktusolat = default;
+      #  aggregator = default;
+      #  client     = default;
+      #};
+
+      # Single-user Home Manager Module
+      homeManagerModules = {
+        default    = import ./module/home-manager.nix { inherit self; };
+        waktusolat = import ./module/home-manager.nix { inherit self; };
+      };
+
     };
 }

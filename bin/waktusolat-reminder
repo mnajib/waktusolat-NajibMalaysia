@@ -1,0 +1,113 @@
+#!/usr/bin/env bash
+# bin/waktusolat-reminder
+
+MODE="user"
+ZONE="SGR01"
+
+# Parse arguments
+while [[ "$#" -gt 0 ]]; do
+    case $1 in
+        --mode) MODE="$2"; shift ;;
+        --zone) ZONE="$2"; shift ;;
+        *) echo "Unknown parameter passed: $1"; exit 1 ;;
+    esac
+    shift
+done
+
+#CACHE_FILE="/var/cache/waktusolat/${ZONE}.json"
+#
+# DYNAMIC DATA DIR FIX:
+# Resolves /var/lib/waktusolat on aggregator hosts (nyxora)
+# and /var/cache/waktusolat on client hosts (asmak, khawlah, etc.)
+DATA_DIR="${WAKTUSOLAT_DATA_DIR:-/var/cache/waktusolat}"
+CACHE_FILE="${DATA_DIR}/${ZONE}.json"
+
+# Determine output directory based on mode (System vs Home Manager)
+if [[ "$MODE" == "system" ]]; then
+    STATE_DIR="/run/waktusolat"
+else
+    RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+    STATE_DIR="${RUNTIME_DIR}/waktusolat"
+fi
+
+mkdir -p "$STATE_DIR"
+
+while true; do
+    if [[ ! -f "$CACHE_FILE" ]]; then
+        echo '{"error": "Cache file missing"}' > "$STATE_DIR/reminder.tmp.json"
+        mv "$STATE_DIR/reminder.tmp.json" "$STATE_DIR/reminder.json"
+        sleep 5
+        continue
+    fi
+
+    # 1. Read static data (Extracting ALL times)
+    SERVER_TIME=$(jq -r '.server_time // empty' "$CACHE_FILE")
+
+    # Date extraction (Modify jq paths if your JSON structure differs for gregorian/hijri dates)
+    MDATE=$(jq -r '.gregorian_date // empty' "$CACHE_FILE")
+    HDATE=$(jq -r '.hijri_date // empty' "$CACHE_FILE")
+
+    FJR=$(jq -r '.prayers[] | select(.name_bm=="Subuh").time' "$CACHE_FILE")
+    SYU=$(jq -r '.prayers[] | select(.name_bm=="Syuruk").time' "$CACHE_FILE")
+    ZHR=$(jq -r '.prayers[] | select(.name_bm=="Zohor").time' "$CACHE_FILE")
+    ASR=$(jq -r '.prayers[] | select(.name_bm=="Asar").time' "$CACHE_FILE")
+    MGH=$(jq -r '.prayers[] | select(.name_bm=="Maghrib").time' "$CACHE_FILE")
+    ISY=$(jq -r '.prayers[] | select(.name_bm=="Isyak").time' "$CACHE_FILE")
+
+    TOGGLE=$(( $(date +%s) % 2 ))
+
+    # 2. Format JSON (reminder.json)
+    jq -n \
+      --arg zone "$ZONE" \
+      --arg stime "$SERVER_TIME" \
+      --arg fjr "$FJR" \
+      --arg syu "$SYU" \
+      --arg zhr "$ZHR" \
+      --arg asr "$ASR" \
+      --arg mgh "$MGH" \
+      --arg isy "$ISY" \
+      --arg toggle "$TOGGLE" \
+      '{
+        zone: $zone,
+        server_time: $stime,
+        subuh: $fjr,
+        syuruk: $syu,
+        zohor: $zhr,
+        asar: $asr,
+        maghrib: $mgh,
+        isyak: $isy,
+        toggle: $toggle
+      }' > "$STATE_DIR/reminder.tmp.json"
+
+    # 3. Format CLI (reminder.cli)
+    {
+      echo "----------------------------------------"
+      echo " Waktu Solat : $ZONE ($MDATE / $HDATE)"
+      echo "----------------------------------------"
+      echo " Subuh      : $FJR"
+      echo " Syuruk     : $SYU"
+      echo " Zohor      : $ZHR"
+      echo " Asar       : $ASR"
+      echo " Maghrib    : $MGH"
+      echo " Isyak      : $ISY"
+      echo "----------------------------------------"
+    } > "$STATE_DIR/reminder.tmp.cli"
+
+    # 4. Format TXT / xmobar (reminder.txt)
+    # Note: To exactly match your example, you will need to map the date strings dynamically (Aug, Wed, Safar, Rab, Kha). 
+    # This string implements the full sequence of all 6 times using your provided color codes.
+    LINE="<fc=#888888>Data ${SERVER_TIME};</fc>     <fc=#ff66ff>(${ZONE}</fc> <fc=#00ffff>(Aug</fc> <fc=#00ffff>${MDATE}</fc> <fc=#00ffff>Wed</fc> <fc=#ffff00>(Safar</fc> <fc=#ffff00>${HDATE}</fc> <fc=#ffff00>Rab</fc> <fc=#000000,#ffffff>Fjr</fc><fc=#000000,#7fffd4> ${FJR} </fc> <fc=#000000,#ffffff>Syu</fc><fc=#000000,#7fffd4> ${SYU} </fc> <fc=#000000,#ffffff>Zhr</fc><fc=#000000,#7fffd4> ${ZHR} </fc> <fc=#000000,#ffffff>Asr</fc><fc=#000000,#7fffd4> ${ASR} </fc><fc=#ffff00>)</fc> <fc=#ffff00>(Kha</fc> <fc=#000000,#ffffff>Mgh</fc><fc=#000000,#7fffd4> ${MGH} </fc> <fc=#000000,#ffffff>Isy</fc><fc=#000000,#7fffd4> ${ISY} </fc><fc=#ffff00>)</fc><fc=#00ffff>)</fc><fc=#ff66ff>)</fc>"
+    echo "$LINE" > "$STATE_DIR/reminder.tmp.txt"
+
+    # 5. Format HTML / Waybar (reminder.html)
+    HTML_LINE="<span color='#ff66ff'>${ZONE}</span> <span background='#ffffff' color='#000000'>Fjr</span> ${FJR} <span background='#ffffff' color='#000000'>Syu</span> ${SYU} <span background='#ffffff' color='#000000'>Zhr</span> ${ZHR} <span background='#ffffff' color='#000000'>Asr</span> ${ASR} <span background='#ffffff' color='#000000'>Mgh</span> ${MGH} <span background='#ffffff' color='#000000'>Isy</span> ${ISY}"
+    echo "$HTML_LINE" > "$STATE_DIR/reminder.tmp.html"
+
+    # 6. Atomic moves to prevent UI read errors
+    mv "$STATE_DIR/reminder.tmp.json" "$STATE_DIR/reminder.json"
+    mv "$STATE_DIR/reminder.tmp.cli"  "$STATE_DIR/reminder.cli"
+    mv "$STATE_DIR/reminder.tmp.txt"  "$STATE_DIR/reminder.txt"
+    mv "$STATE_DIR/reminder.tmp.html" "$STATE_DIR/reminder.html"
+
+    sleep 1
+done
