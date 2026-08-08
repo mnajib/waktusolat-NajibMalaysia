@@ -13,17 +13,24 @@ let
   waktusolatPackages = self.packages.${system};
 in
 {
+
+#-------------------------------------------------------------------------------
+
   options.services.waktusolat = {
     enable = lib.mkEnableOption "Waktu Solat UI renderers and runtime state daemon";
+
+    zone = lib.mkOption {
+      type = lib.types.str;
+      default = "SGR01";
+      description = "JAKIM zone code to fetch prayer times for.";
+    };
 
     fetcher = {
       enable = lib.mkEnableOption "local fetchd (Disable this if nixos-client is handling fetches system-wide)";
     };
 
-    zone = lib.mkOption {
-      type = lib.types.str;
-      default = "SGR01"; 
-      description = "JAKIM zone code to fetch prayer times for.";
+    reminder = {
+      enable = lib.mkEnableOption "update per-second waktusolat reminder to /run/user/<UID>/waktusolat/";
     };
 
     logLevel = lib.mkOption {
@@ -32,6 +39,8 @@ in
       description = "Log verbosity for waktusolat daemons.";
     };
   };
+
+#-------------------------------------------------------------------------------
 
   config = lib.mkIf cfg.enable {
     home.packages = [
@@ -63,7 +72,8 @@ in
     };
 
     # The 1-second state formatter daemon (User Mode)
-    systemd.user.services.waktusolat-reminder = {
+    #systemd.user.services.waktusolat-reminder = {
+    systemd.user.services.waktusolat-reminder = lib.mkIf cfg.reminder.enable {
       Unit = {
         Description = "Waktu Solat runtime state formatter (User Mode)";
         After = [ "graphical-session.target" ];
@@ -79,7 +89,7 @@ in
         ExecStart = "${waktusolatPackages.reminder}/bin/waktusolat-reminder --mode user --zone ${cfg.zone}";
         Restart = "always";
         RestartSec = "3";
-        RuntimeDirectory = "waktusolat"; 
+        RuntimeDirectory = "waktusolat";
 
         # Security constraints
         NoNewPrivileges = true;

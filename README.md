@@ -139,53 +139,23 @@ The primary node fetches prayer times directly from JAKIM, stores the raw neutra
 
 ```nix
 # profiles/nixos/hosts/nyxora/services/waktusolat.nix
-{ config, pkgs, inputs, ... }:
+{ config, inputs, ... }:
 
-#let
-#  waktusolatPkgs = inputs.waktusolat.packages.${pkgs.system};
-#in
 {
   imports = [
-    #inputs.waktusolat.nixosModules.aggregator
-    #
-    # Import the (new) unified module in your NixOS configuration:
     inputs.waktusolat.nixosModules.default
   ];
-
-  # 1. Enable the origin/aggregator daemon
-  #services.waktusolatAggregator = {
-  #  enable = true;
-  #  zones = [ "SGR01" ];
-  #  port = 8089;
-  #  dataDir = "/var/lib/waktusolat";
-  #  logLevel = "INFO";
-  #};
-  #
-  # 2. Install UI renderers and CLI tool
-  #environment.systemPackages = [
-  #  waktusolatPkgs.render-xmobar
-  #  waktusolatPkgs.render-waybar
-  #  waktusolatPkgs.cli
-  #];
-  #
-  # 3. Export data path for renderers on the aggregator node
-  #environment.sessionVariables = {
-  #  WAKTUSOLAT_DATA_DIR = "/var/lib/waktusolat";
-  #  WAKTUSOLAT_ZONE = "SGR01";
-  #};
 
   services.waktusolat = {
     enable = true;
     zones = [ "SGR01" ];
-    dataDir = "/var/cache/waktusolat";
-    reminder.enable = true;
 
     aggregator = {
       enable = true;
-      port = 8089;
       openFirewallPort = true;
-      dataDir = "/var/lib/waktusolat";
     };
+
+    reminder.enable = false;
   };
 
 }
@@ -197,39 +167,21 @@ Client hosts request cached prayer data from nyxora over the local network. If `
 
 ```nix
 # profiles/nixos/hosts/parang/services/waktusolat.nix
-{ config, pkgs, inputs, ... }:
+{ config, inputs, ... }:
 
 {
   imports = [
-    #inputs.waktusolat.nixosModules.client
-    #
     #Import the unified module in your NixOS configuration:
     inputs.waktusolat.nixosModules.default
   ];
 
-  # 1. Enable client daemon with fallback
-  #services.waktusolatClient = {
-  #  enable = true;
-  #  aggregatorUrl = "http://nyxora:8089";
-  #  zones = [ "SGR01" ];
-  #  dataDir = "/var/cache/waktusolat";
-  #  aggregatorTimeout = 3;
-  #};
-  #
-  # 2. Export data path for renderers on satellite nodes
-  #environment.sessionVariables = {
-  #  WAKTUSOLAT_DATA_DIR = "/var/cache/waktusolat";
-  #  WAKTUSOLAT_ZONE = "SGR01";
-  #};
-
   services.waktusolat = {
     enable = true;
-    aggregatorUrl = "http://nyxora:8089";
-    aggregatorTimeout = 3;            # Seconds before direct internet fallback
     zones = [ "SGR01" ];
-    dataDir = "/var/cache/waktusolat";
 
-    reminder.enable = true;          # Enables per-second /run/waktusolat/ daemon
+    aggregatorUrl = "http://nyxora:8089";
+
+    reminder.enable = false;          # Enables per-second /run/waktusolat/ daemon
   };
 
 }
@@ -241,7 +193,8 @@ For isolated, single-user desktop setups that do not participate in a multi-host
 
 ```nix
 {
-  inputs.waktusolat.url = "github:NajibMalaysia/waktusolat-NajibMalaysia";
+  #inputs.waktusolat.url = "github:NajibMalaysia/waktusolat-NajibMalaysia";
+  { config, inputs, ... }:
 
   # in your home-manager module list:
   imports = [
@@ -251,10 +204,10 @@ For isolated, single-user desktop setups that do not participate in a multi-host
   services.waktusolat = {
     enable = true;
     zone = "SGR01";
-    logLevel = "INFO";
 
     # Disable fetcher if system-level NixOS client/aggregator is active
     fetcher.enable = false;
+
     reminder.enable = true;
   };
 }

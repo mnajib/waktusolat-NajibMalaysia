@@ -75,6 +75,35 @@ one of “SILENT”, “ERROR”, “WARN”, “INFO”, “DEBUG”
 
 
 
+## services\.waktusolat\.reminder\.enable
+
+
+
+Whether to enable update per-second waktusolat reminder to /run/user/\<UID>/waktusolat/\.
+
+
+
+*Type:*
+boolean
+
+
+
+*Default:*
+
+```nix
+false
+```
+
+
+
+*Example:*
+
+```nix
+true
+```
+
+
+
 ## services\.waktusolat\.zone
 
 
