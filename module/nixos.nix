@@ -71,6 +71,8 @@ in {
     };
   };
 
+#-------------------------------------------------------------------------------
+
   config = lib.mkIf cfg.enable {
     # 1. System user setup
     users.users.waktusolat = {
@@ -95,7 +97,7 @@ in {
     ];
 
     # 3. Services setup
-    systemd.services = 
+    systemd.services =
       # 3.1 Fetcher Service per configured zone
       (lib.listToAttrs (map (zone: {
         name = "waktusolat-fetch-${zone}";

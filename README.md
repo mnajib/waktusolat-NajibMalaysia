@@ -2,40 +2,30 @@
 
 JAKIM Prayer Time Aggregator, Client & State Formatter
 
+
 ## OVERVIEW
 
-waktusolat-NajibMalaysia is a unified, modular NixOS suite designed to fetch,
-aggregate, and format JAKIM e-solat prayer times for desktop status bars
-(`xmobar`, `Waybar`) and CLI environments.
+waktusolat-NajibMalaysia is a unified, modular NixOS suite designed to fetch, aggregate, and format JAKIM e-solat prayer times for desktop status bars (`xmobar`, `Waybar`) and CLI environments.
 
-To minimize WAN traffic and prevent redundant API queries to JAKIM, the system
-supports a 2-tier architecture (Aggregator and Client). All 1-second state
-updates for desktop status bars are written strictly to RAM disk (`tmpfs`) to
-prevent SSD wear.
+To minimize WAN traffic and prevent redundant API queries to JAKIM, the system supports a 2-tier architecture (Aggregator and Client). All 1-second state updates for desktop status bars are written strictly to RAM disk (`tmpfs`) to prevent SSD wear.
+
 
 ## KEY FEATURES & OPTIMIZATION HIGHLIGHTS
 
 1. Zero SSD Wear (RAM Disk Engine)
-   - All continuous 1-second state updates (JSON, CLI, xmobar TXT, Waybar HTML) 
-     are written strictly to RAM disk (`tmpfs` at `/run/waktusolat/`).
-   - The primary prayer data on physical disk is only updated when new schedules 
-     are fetched (typically once per day), eliminating continuous disk write 
-     cycles and preserving drive longevity.
+   - All continuous 1-second state updates (JSON, CLI, xmobar TXT, Waybar HTML) are written strictly to RAM disk (`tmpfs` at `/run/waktusolat/`).
+   - The primary prayer data on physical disk is only updated when new schedules are fetched (typically once per day), eliminating continuous disk write cycles and preserving drive longevity.
 
 2. Efficient LAN Aggregation
-   - `nyxora` acts as the single primary origin node, fetching directly from 
-     JAKIM e-solat.
-   - Client workstation nodes (`asmak`, `khawlah`, etc.) query `nyxora` over HTTP, 
-     drastically reducing external WAN queries and preventing redundant API traffic.
+   - `nyxora` acts as the single primary origin node, fetching directly from JAKIM e-solat.
+   - Client workstation nodes (`asmak`, `khawlah`, etc.) query `nyxora` over HTTP, drastically reducing external WAN queries and preventing redundant API traffic.
 
 3. Seamless Offline / WAN Fallback
-   - Client fetchers automatically fall back to direct JAKIM API calls if the 
-     LAN aggregator is unreachable (e.g., laptop traveling outside the home LAN).
+   - Client fetchers automatically fall back to direct JAKIM API calls if the LAN aggregator is unreachable (e.g., laptop traveling outside the home LAN).
 
 4. Pure Declarative NixOS Architecture
-   - Unified `services.waktusolat.*` options automatically configure systemd units, 
-     file paths, and local web servers without requiring complex symlinks or 
-     manual path handling.
+   - Unified `services.waktusolat.*` options automatically configure systemd units, file paths, and local web servers without requiring complex symlinks or manual path handling.
+
 
 ## Architecture & Data Flow
 
@@ -213,6 +203,7 @@ For isolated, single-user desktop setups that do not participate in a multi-host
 }
 ```
 
+
 ## Summary
 
 ### Directory & Storage Summary
@@ -245,78 +236,6 @@ Renderers and daemons rely on the following environment variables:
 |`WAKTUSOLAT_LIB_DIR` | Directory containing library scripts | Relative script path |
 |`WAKTUSOLAT_LOGLEVEL` | Logging level ( `SILENT`, `ERROR`, `WARN`, `INFO`, `DEBUG` ) | `INFO` |
 
-## Status Bar Integrations
-
-Because the system-level state daemon continuously updates files in RAM disk (`/run/waktusolat/`),
-status bar configurations can simply read these files directly with virtually zero CPU overhead.
-
-### xmobar Integration
-
-Use a CommandReader or PipeReader to display formatted text:
-
-`~/.config/xmobar/xmobar.hs`:
-
-```haskell
-Config {
-    -- ...
-    commands = [
-        --Run Com "waktusolat-render-xmobar" [] "waktusolat" 10
-
-        -- Reads the pre-formatted xmobar string from tmpfs every second
-        Run CommandReader "cat /run/waktusolat/reminder.txt" "waktusolat"
-    ],
-    --template = "%UnsafeXMonadLog% }{ %waktusolat% | %date%"
-    template = " %Unset% | %waktusolat% | %date% "
-}
-
-```
-
-### Waybar Integration (Niri / Hyprland)
-
-Use a custom module running in continuous script execution mode.
-
-`~/.config/waybar/config.jsonc`:
-
-```jsonc
-"custom/waktusolat": {
-    //"exec": "waktusolat-render-waybar",
-    //"exec": "cat /run/waktusolat/reminder.html",
-    "exec": "cat /run/waktusolat/reminder.json",
-    "return-type": "json",
-    "interval": 1, // 30, // 1 seconds for blinking effect
-    "tooltip": true
-}
-```
-
-Or, if using the pre-formatted plain Pango markup output:
-
-```Pango
-  "custom/waktusolat": {
-    //"exec": "cat /run/waktusolat/reminder.txt",
-    "exec": "cat /run/waktusolat/reminder.html",
-    "interval": 1
-  }
-```
-
-### Generic / Polybar / dwmbar Configuration
-
-For simple bar scripts or Polybar `custom/script` modules:
-
-```
-[module/waktusolat]
-  type = custom/script
-  exec = cat /run/waktusolat/reminder.cli
-  interval = 1
-  tail = false
-```
-
-### Ad-hoc lookup (no daemon needed)
-
-Query formatted prayer times directly in your terminal without invoking a status bar renderer:
-
-```bash
-waktusolat-cli SGR01
-```
 
 ## VERIFICATION & DIAGNOSTICS
 
@@ -334,6 +253,7 @@ Monitor real-time state updates in tmpfs:
   $ watch -n 1 cat /run/waktusolat/reminder.txt
 ```
 
+
 ## Development & Testing
 
 Enter the development environment to execute test suites and static analysis tools:
@@ -348,3 +268,16 @@ bats tests/
 # Run ShellCheck on scripts
 shellcheck lib/*.sh bin/*
 ```
+
+## Documentation
+
+Additional guides and detailed module option references are available in the [`docs/`](./docs) directory:
+
+* **[NixOS Options (`docs/NIXOS-OPTIONS.md`)](./docs/NIXOS-OPTIONS.md)**  
+  Complete reference for all system-level NixOS module options, including daemon configurations, HTTP LAN aggregator settings, and satellite client controls.
+
+* **[Home Manager Options (`docs/HOME-MANAGER-OPTIONS.md`)](./docs/HOME-MANAGER-OPTIONS.md)**  
+  Detailed option listings for single-user environment management under Home Manager.
+
+* **[Status Bar Integrations (`docs/STATUS-BAR-INTEGRATIONS.md`)](./docs/STATUS-BAR-INTEGRATIONS.md)**  
+  Setup guides and script integration examples for status bars like XMobar and Waybar.
