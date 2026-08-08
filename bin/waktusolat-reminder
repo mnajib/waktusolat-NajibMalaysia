@@ -27,6 +27,41 @@ fi
 
 mkdir -p "$STATE_DIR"
 
+# Hijri month lookup array
+get_hijri_month_name() {
+    local m="${1#0}" # remove leading zero
+    local months=("" "Muharram" "Safar" "Rabiulawal" "Rabiulakhir" "Jamadilawal" "Jamadilakhir" "Rejab" "Syaaban" "Ramadan" "Syawal" "Zulkaedah" "Zulhijjah")
+    echo "${months[$m]:-}"
+}
+
+# Hijri day name lookup (BM traditional)
+get_hijri_day_name() {
+    case "$1" in
+        Sun|Sunday)    echo "Aha" ;;
+        Mon|Monday)    echo "Isn" ;;
+        Tue|Tuesday)   echo "Sel" ;;
+        Wed|Wednesday) echo "Rab" ;;
+        Thu|Thursday)  echo "Kha" ;;
+        Fri|Friday)    echo "Jum" ;;
+        Sat|Saturday)  echo "Sab" ;;
+        *) echo "Aha" ;;
+    esac
+}
+
+# Next Hijri day lookup for Maghrib/Isyak transition
+get_next_hijri_day_name() {
+    case "$1" in
+        Aha) echo "Isn" ;;
+        Isn) echo "Sel" ;;
+        Sel) echo "Rab" ;;
+        Rab) echo "Kha" ;;
+        Kha) echo "Jum" ;;
+        Jum) echo "Sab" ;;
+        Sab) echo "Aha" ;;
+        *)   echo "Isn" ;;
+    esac
+}
+
 while true; do
     if [[ ! -f "$CACHE_FILE" ]]; then
         echo '{"error": "Cache file missing", "is_stale": true}' > "$STATE_DIR/reminder.tmp.json"
@@ -44,9 +79,9 @@ while true; do
 
     TOGGLE=$(( $(date +%s) % 2 ))
 
-    # Single-pass parsing with jq: extract all values into a single tab-separated line
+    # Single-pass parsing with jq
     # Inline IFS=$'\t' guarantees splitting happens solely on TSV tabs.
-    IFS=$'\t' read -r IS_STALE SERVER_TIME MDATE HDATE IMS FJR SYU ZHR ASR MGH ISY < <(
+    IFS=$'\t' read -r IS_STALE SERVER_TIME MDATE HDATE DAY FJR SYU ZHR ASR MGH ISY < <(
         jq -r '
           def p(bm; key):
             if .prayers | type == "array" then
@@ -59,7 +94,7 @@ while true; do
             (.server_time // .last_updated // "-"),
             (.gregorian_date // .date // "-"),
             (.hijri_date // "-"),
-            p("Imsak"; "imsak"),
+            (.day // "-"),
             p("Subuh"; "fajr"),
             p("Syuruk"; "syuruk"),
             p("Zohor"; "dhuhr"),
@@ -69,6 +104,43 @@ while true; do
           ] | @tsv
         ' "$CACHE_FILE"
     )
+
+    # Convert Gregorian Date / Day
+    if [[ "$MDATE" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+        G_DATE_ISO="$MDATE"
+    else
+        G_DATE_ISO=$(date -d "$MDATE" +"%Y-%m-%d" 2>/dev/null || date +"%Y-%m-%d")
+    fi
+
+    G_MONTH_ABB=$(date -d "$G_DATE_ISO" +"%b" 2>/dev/null || echo "Aug")
+    G_DAY_ABB=$(date -d "$G_DATE_ISO" +"%a" 2>/dev/null || echo "Sun")
+
+    # Extract Hijri Month & Day
+    IFS='-' read -r H_YEAR H_MONTH_NUM H_DAY <<< "$HDATE"
+    H_MONTH_NAME=$(get_hijri_month_name "${H_MONTH_NUM:-2}")
+    H_DAY_NAME=$(get_hijri_day_name "$DAY")
+    H_NEXT_DAY_NAME=$(get_next_hijri_day_name "$H_DAY_NAME")
+
+    # Calculate active prayer highlight color (#ffbf00 active vs #7fffd4 default)
+    NOW_HM=$(date +"%H:%M")
+    COLOR_FJR="#7fffd4"; COLOR_SYU="#7fffd4"; COLOR_ZHR="#7fffd4"
+    COLOR_ASR="#7fffd4"; COLOR_MGH="#7fffd4"; COLOR_ISY="#7fffd4"
+
+    if [[ "$NOW_HM" < "$FJR" ]]; then
+        COLOR_ISY="#ffbf00"
+    elif [[ "$NOW_HM" < "$SYU" ]]; then
+        COLOR_FJR="#ffbf00"
+    elif [[ "$NOW_HM" < "$ZHR" ]]; then
+        COLOR_SYU="#ffbf00"
+    elif [[ "$NOW_HM" < "$ASR" ]]; then
+        COLOR_ZHR="#ffbf00"
+    elif [[ "$NOW_HM" < "$MGH" ]]; then
+        COLOR_ASR="#ffbf00"
+    elif [[ "$NOW_HM" < "$ISY" ]]; then
+        COLOR_MGH="#ffbf00"
+    else
+        COLOR_ISY="#ffbf00"
+    fi
 
     # Prepare OLD badges based on is_stale state
     OLD_TXT=""
@@ -85,7 +157,7 @@ while true; do
       --arg zone "$ZONE" \
       --arg stime "$SERVER_TIME" \
       --argjson is_stale "$IS_STALE" \
-      --arg ims "$IMS" \
+      --arg day "$DAY" \
       --arg fjr "$FJR" \
       --arg syu "$SYU" \
       --arg zhr "$ZHR" \
@@ -97,7 +169,7 @@ while true; do
         zone: $zone,
         server_time: $stime,
         is_stale: $is_stale,
-        imsak: $ims,
+        day: $day,
         subuh: $fjr,
         syuruk: $syu,
         zohor: $zhr,
@@ -110,9 +182,8 @@ while true; do
     # 2. Format CLI (reminder.cli)
     {
       echo "----------------------------------------"
-      echo " Waktu Solat : $ZONE ($MDATE / $HDATE) ${OLD_CLI}"
+      echo " Waktu Solat : $ZONE ($DAY, $G_DATE_ISO / $HDATE) ${OLD_CLI}"
       echo "----------------------------------------"
-      echo " Imsak      : $IMS"
       echo " Subuh      : $FJR"
       echo " Syuruk     : $SYU"
       echo " Zohor      : $ZHR"
@@ -123,7 +194,7 @@ while true; do
     } > "$STATE_DIR/reminder.tmp.cli"
 
     # 3. Format TXT / xmobar (reminder.txt)
-    LINE="<fc=#888888>Data ${SERVER_TIME};</fc> ${OLD_TXT}<fc=#ff66ff>(${ZONE}</fc> <fc=#00ffff>(${MDATE}</fc> <fc=#ffff00>${HDATE}</fc> <fc=#000000,#ffffff>Fjr</fc><fc=#000000,#7fffd4> ${FJR} </fc> <fc=#000000,#ffffff>Syu</fc><fc=#000000,#7fffd4> ${SYU} </fc> <fc=#000000,#ffffff>Zhr</fc><fc=#000000,#7fffd4> ${ZHR} </fc> <fc=#000000,#ffffff>Asr</fc><fc=#000000,#7fffd4> ${ASR} </fc><fc=#ffff00>)</fc> <fc=#000000,#ffffff>Mgh</fc><fc=#000000,#7fffd4> ${MGH} </fc> <fc=#000000,#ffffff>Isy</fc><fc=#000000,#7fffd4> ${ISY} </fc><fc=#ffff00>)</fc><fc=#00ffff>)</fc><fc=#ff66ff>)</fc>"
+    LINE="<fc=#888888>Data ${SERVER_TIME};</fc> ${OLD_TXT}<fc=#ff66ff>(${ZONE}</fc> <fc=#00ffff>(${G_MONTH_ABB}</fc> <fc=#00ffff>${G_DATE_ISO}</fc> <fc=#00ffff>${G_DAY_ABB}</fc> <fc=#ffff00>(${H_MONTH_NAME}</fc> <fc=#ffff00>${HDATE}</fc> <fc=#ffff00>${H_DAY_NAME}</fc> <fc=#000000,#ffffff>Fjr</fc><fc=#000000,${COLOR_FJR}> ${FJR} </fc> <fc=#000000,#ffffff>Syu</fc><fc=#000000,${COLOR_SYU}> ${SYU} </fc> <fc=#000000,#ffffff>Zhr</fc><fc=#000000,${COLOR_ZHR}> ${ZHR} </fc> <fc=#000000,#ffffff>Asr</fc><fc=#000000,${COLOR_ASR}> ${ASR} </fc><fc=#ffff00>)</fc> <fc=#ffff00>(${H_NEXT_DAY_NAME}</fc> <fc=#000000,#ffffff>Mgh</fc><fc=#000000,${COLOR_MGH}> ${MGH} </fc> <fc=#000000,#ffffff>Isy</fc><fc=#000000,${COLOR_ISY}> ${ISY} </fc><fc=#ffff00>)</fc><fc=#00ffff>)</fc><fc=#ff66ff>)</fc>"
     echo "$LINE" > "$STATE_DIR/reminder.tmp.txt"
 
     # 4. Format HTML / Waybar (reminder.html)
