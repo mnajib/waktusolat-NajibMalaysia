@@ -85,8 +85,8 @@
             inherit system;
             modules = [
               (import ./module/nixos.nix { inherit self; })
-              (import ./module/nixos-aggregator.nix { inherit self; })
-              (import ./module/nixos-client.nix { inherit self; })
+              #(import ./module/nixos-aggregator.nix { inherit self; })
+              #(import ./module/nixos-client.nix { inherit self; })
             ];
           };
 
