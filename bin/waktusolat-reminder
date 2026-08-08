@@ -45,8 +45,8 @@ while true; do
     TOGGLE=$(( $(date +%s) % 2 ))
 
     # Single-pass parsing with jq: extract all values into a single tab-separated line
-    # Supports both flat (.prayers.fajr) and array (.prayers[]) canonical JSON structures.
-    read -r IS_STALE SERVER_TIME MDATE HDATE FJR SYU ZHR ASR MGH ISY < <(
+    # Inline IFS=$'\t' guarantees splitting happens solely on TSV tabs.
+    IFS=$'\t' read -r IS_STALE SERVER_TIME MDATE HDATE IMS FJR SYU ZHR ASR MGH ISY < <(
         jq -r '
           def p(bm; key):
             if .prayers | type == "array" then
@@ -59,6 +59,7 @@ while true; do
             (.server_time // .last_updated // "-"),
             (.gregorian_date // .date // "-"),
             (.hijri_date // "-"),
+            p("Imsak"; "imsak"),
             p("Subuh"; "fajr"),
             p("Syuruk"; "syuruk"),
             p("Zohor"; "dhuhr"),
@@ -84,6 +85,7 @@ while true; do
       --arg zone "$ZONE" \
       --arg stime "$SERVER_TIME" \
       --argjson is_stale "$IS_STALE" \
+      --arg ims "$IMS" \
       --arg fjr "$FJR" \
       --arg syu "$SYU" \
       --arg zhr "$ZHR" \
@@ -95,6 +97,7 @@ while true; do
         zone: $zone,
         server_time: $stime,
         is_stale: $is_stale,
+        imsak: $ims,
         subuh: $fjr,
         syuruk: $syu,
         zohor: $zhr,
@@ -109,6 +112,7 @@ while true; do
       echo "----------------------------------------"
       echo " Waktu Solat : $ZONE ($MDATE / $HDATE) ${OLD_CLI}"
       echo "----------------------------------------"
+      echo " Imsak      : $IMS"
       echo " Subuh      : $FJR"
       echo " Syuruk     : $SYU"
       echo " Zohor      : $ZHR"
