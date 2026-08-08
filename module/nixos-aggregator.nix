@@ -41,7 +41,7 @@ in
     };
 
     zones = lib.mkOption {
-      type = lib.types.listOf types.str;
+      type = lib.types.listOf lib.types.str;
       default = [ "SGR01" ];
       example = [ "SGR01" "WLY01" ];
       description = ''
@@ -50,13 +50,13 @@ in
       '';
     };
 
-    logLevel = mkOption {
-      type = types.enum [ "SILENT" "ERROR" "WARN" "INFO" "DEBUG" ];
+    logLevel = lib.mkOption {
+      type = lib.types.enum [ "SILENT" "ERROR" "WARN" "INFO" "DEBUG" ];
       default = "INFO";
     };
   };
 
-  config = mkIf cfg.enable {
+  config = lib.mkIf cfg.enable {
     users.users.waktusolat = {
       isSystemUser = true;
       group = "waktusolat";
