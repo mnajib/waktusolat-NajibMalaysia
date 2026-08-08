@@ -10,7 +10,7 @@ waktusolat-NajibMalaysia is a unified, modular NixOS suite designed to fetch, ag
 To minimize WAN traffic and prevent redundant API queries to JAKIM, the system supports a 2-tier architecture (Aggregator and Client). All 1-second state updates for desktop status bars are written strictly to RAM disk (`tmpfs`) to prevent SSD wear.
 
 
-## KEY FEATURES & OPTIMIZATION HIGHLIGHTS
+## FEATURES
 
 1. Zero SSD Wear (RAM Disk Engine)
    - All continuous 1-second state updates (JSON, CLI, xmobar TXT, Waybar HTML) are written strictly to RAM disk (`tmpfs` at `/run/waktusolat/`).
@@ -25,6 +25,15 @@ To minimize WAN traffic and prevent redundant API queries to JAKIM, the system s
 
 4. Pure Declarative NixOS Architecture
    - Unified `services.waktusolat.*` options automatically configure systemd units, file paths, and local web servers without requiring complex symlinks or manual path handling.
+
+5. Adaptive Exponential Backoff & Jitter Fallback
+   - Direct JAKIM fetch failures use an adaptive retry schedule starting at 30 seconds and exponentially doubling up to 15 minutes ($30\text{s} \to 60\text{s} \to 120\text{s} \dots \text{max } 15\text{m}$).
+   - Includes 1–10s randomized jitter to prevent API stampedes/collisions during connection recoveries.
+   - Automatically resets to the normal 3-hour interval on the next successful refresh.
+
+6. Visual Stale Data Indication (OLD Badge)
+   - When network connectivity fails or JAKIM is unreachable, waktusolat-fetchd falls back to cached backup data and sets "is_stale": true.
+   - waktusolat-reminder automatically injects a highlighted OLD badge into status bars (xmobar, Waybar) and CLI outputs to visually notify you that prayer times are served from stale cache.
 
 
 ## Architecture & Data Flow
@@ -171,7 +180,7 @@ Client hosts request cached prayer data from nyxora over the local network. If `
 
     aggregatorUrl = "http://nyxora:8089";
 
-    reminder.enable = false;          # Enables per-second /run/waktusolat/ daemon
+    reminder.enable = true;          # Enables per-second /run/waktusolat/ daemon
   };
 
 }
@@ -182,9 +191,8 @@ Client hosts request cached prayer data from nyxora over the local network. If `
 For isolated, single-user desktop setups that do not participate in a multi-host LAN architecture, operating in user-session space:
 
 ```nix
+{ config, inputs, ... }:
 {
-  #inputs.waktusolat.url = "github:NajibMalaysia/waktusolat-NajibMalaysia";
-  { config, inputs, ... }:
 
   # in your home-manager module list:
   imports = [
@@ -200,6 +208,7 @@ For isolated, single-user desktop setups that do not participate in a multi-host
 
     reminder.enable = true;
   };
+
 }
 ```
 
@@ -231,6 +240,8 @@ Renderers and daemons rely on the following environment variables:
 
 | Variable | Description | Default Value |
 |----------|-------------|---------------|
+| `WAKTUSOLAT_AGGREGATOR_URL` | Aggregator endpoint (e.g., http://nyxora:8089). Unset = origin role. | "" (origin) |
+| `WAKTUSOLAT_AGGREGATOR_TIMEOUT` | LAN Aggregator HTTP request timeout in seconds | 3 |
 |`WAKTUSOLAT_DATA_DIR` | Path containing output `<ZONE>.json` files | `/var/cache/waktusolat` |
 |`WAKTUSOLAT_ZONE` | Default JAKIM zone code to read or query | `SGR01` |
 |`WAKTUSOLAT_LIB_DIR` | Directory containing library scripts | Relative script path |

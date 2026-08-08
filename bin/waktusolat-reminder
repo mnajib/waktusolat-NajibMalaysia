@@ -29,8 +29,15 @@ mkdir -p "$STATE_DIR"
 
 while true; do
     if [[ ! -f "$CACHE_FILE" ]]; then
-        echo '{"error": "Cache file missing"}' > "$STATE_DIR/reminder.tmp.json"
+        echo '{"error": "Cache file missing", "is_stale": true}' > "$STATE_DIR/reminder.tmp.json"
+        echo "Waktu Solat: No Cache File" > "$STATE_DIR/reminder.tmp.cli"
+        echo "<fc=#ff5555>WaktuSolat: No Cache</fc>" > "$STATE_DIR/reminder.tmp.txt"
+        echo "<span color='#ff5555'>WaktuSolat: No Cache</span>" > "$STATE_DIR/reminder.tmp.html"
+
         mv "$STATE_DIR/reminder.tmp.json" "$STATE_DIR/reminder.json"
+        mv "$STATE_DIR/reminder.tmp.cli"  "$STATE_DIR/reminder.cli"
+        mv "$STATE_DIR/reminder.tmp.txt"  "$STATE_DIR/reminder.txt"
+        mv "$STATE_DIR/reminder.tmp.html" "$STATE_DIR/reminder.html"
         sleep 5
         continue
     fi
@@ -38,28 +45,45 @@ while true; do
     TOGGLE=$(( $(date +%s) % 2 ))
 
     # Single-pass parsing with jq: extract all values into a single tab-separated line
-    # Order: SERVER_TIME, MDATE, HDATE, Subuh, Syuruk, Zohor, Asar, Maghrib, Isyak
-    read -r SERVER_TIME MDATE HDATE FJR SYU ZHR ASR MGH ISY < <(
+    # Supports both flat (.prayers.fajr) and array (.prayers[]) canonical JSON structures.
+    read -r IS_STALE SERVER_TIME MDATE HDATE FJR SYU ZHR ASR MGH ISY < <(
         jq -r '
-          def p(name): (.prayers[] | select(.name_bm == name).time) // "-";
+          def p(bm; key):
+            if .prayers | type == "array" then
+              (.prayers[] | select(.name_bm == bm).time) // "-"
+            else
+              .prayers[key] // "-"
+            end;
           [
-            (.server_time // "-"),
-            (.gregorian_date // "-"),
+            (.is_stale // true | tostring),
+            (.server_time // .last_updated // "-"),
+            (.gregorian_date // .date // "-"),
             (.hijri_date // "-"),
-            p("Subuh"),
-            p("Syuruk"),
-            p("Zohor"),
-            p("Asar"),
-            p("Maghrib"),
-            p("Isyak")
+            p("Subuh"; "fajr"),
+            p("Syuruk"; "syuruk"),
+            p("Zohor"; "dhuhr"),
+            p("Asar"; "asr"),
+            p("Maghrib"; "maghrib"),
+            p("Isyak"; "isha")
           ] | @tsv
         ' "$CACHE_FILE"
     )
+
+    # Prepare OLD badges based on is_stale state
+    OLD_TXT=""
+    OLD_HTML=""
+    OLD_CLI=""
+    if [[ "$IS_STALE" == "true" ]]; then
+        OLD_TXT="<fc=#ffffff,#ff4d4d> OLD </fc> "
+        OLD_HTML="<span background='#ff4d4d' color='#ffffff'> OLD </span> "
+        OLD_CLI="[OLD DATA] "
+    fi
 
     # 1. Format JSON (reminder.json)
     jq -n \
       --arg zone "$ZONE" \
       --arg stime "$SERVER_TIME" \
+      --argjson is_stale "$IS_STALE" \
       --arg fjr "$FJR" \
       --arg syu "$SYU" \
       --arg zhr "$ZHR" \
@@ -70,6 +94,7 @@ while true; do
       '{
         zone: $zone,
         server_time: $stime,
+        is_stale: $is_stale,
         subuh: $fjr,
         syuruk: $syu,
         zohor: $zhr,
@@ -82,7 +107,7 @@ while true; do
     # 2. Format CLI (reminder.cli)
     {
       echo "----------------------------------------"
-      echo " Waktu Solat : $ZONE ($MDATE / $HDATE)"
+      echo " Waktu Solat : $ZONE ($MDATE / $HDATE) ${OLD_CLI}"
       echo "----------------------------------------"
       echo " Subuh      : $FJR"
       echo " Syuruk     : $SYU"
@@ -94,11 +119,11 @@ while true; do
     } > "$STATE_DIR/reminder.tmp.cli"
 
     # 3. Format TXT / xmobar (reminder.txt)
-    LINE="<fc=#888888>Data ${SERVER_TIME};</fc>     <fc=#ff66ff>(${ZONE}</fc> <fc=#00ffff>(${MDATE}</fc> <fc=#ffff00>${HDATE}</fc> <fc=#000000,#ffffff>Fjr</fc><fc=#000000,#7fffd4> ${FJR} </fc> <fc=#000000,#ffffff>Syu</fc><fc=#000000,#7fffd4> ${SYU} </fc> <fc=#000000,#ffffff>Zhr</fc><fc=#000000,#7fffd4> ${ZHR} </fc> <fc=#000000,#ffffff>Asr</fc><fc=#000000,#7fffd4> ${ASR} </fc><fc=#ffff00>)</fc> <fc=#000000,#ffffff>Mgh</fc><fc=#000000,#7fffd4> ${MGH} </fc> <fc=#000000,#ffffff>Isy</fc><fc=#000000,#7fffd4> ${ISY} </fc><fc=#ffff00>)</fc><fc=#00ffff>)</fc><fc=#ff66ff>)</fc>"
+    LINE="<fc=#888888>Data ${SERVER_TIME};</fc> ${OLD_TXT}<fc=#ff66ff>(${ZONE}</fc> <fc=#00ffff>(${MDATE}</fc> <fc=#ffff00>${HDATE}</fc> <fc=#000000,#ffffff>Fjr</fc><fc=#000000,#7fffd4> ${FJR} </fc> <fc=#000000,#ffffff>Syu</fc><fc=#000000,#7fffd4> ${SYU} </fc> <fc=#000000,#ffffff>Zhr</fc><fc=#000000,#7fffd4> ${ZHR} </fc> <fc=#000000,#ffffff>Asr</fc><fc=#000000,#7fffd4> ${ASR} </fc><fc=#ffff00>)</fc> <fc=#000000,#ffffff>Mgh</fc><fc=#000000,#7fffd4> ${MGH} </fc> <fc=#000000,#ffffff>Isy</fc><fc=#000000,#7fffd4> ${ISY} </fc><fc=#ffff00>)</fc><fc=#00ffff>)</fc><fc=#ff66ff>)</fc>"
     echo "$LINE" > "$STATE_DIR/reminder.tmp.txt"
 
     # 4. Format HTML / Waybar (reminder.html)
-    HTML_LINE="<span color='#ff66ff'>${ZONE}</span> <span background='#ffffff' color='#000000'>Fjr</span> ${FJR} <span background='#ffffff' color='#000000'>Syu</span> ${SYU} <span background='#ffffff' color='#000000'>Zhr</span> ${ZHR} <span background='#ffffff' color='#000000'>Asr</span> ${ASR} <span background='#ffffff' color='#000000'>Mgh</span> ${MGH} <span background='#ffffff' color='#000000'>Isy</span> ${ISY}"
+    HTML_LINE="${OLD_HTML}<span color='#ff66ff'>${ZONE}</span> <span background='#ffffff' color='#000000'>Fjr</span> ${FJR} <span background='#ffffff' color='#000000'>Syu</span> ${SYU} <span background='#ffffff' color='#000000'>Zhr</span> ${ZHR} <span background='#ffffff' color='#000000'>Asr</span> ${ASR} <span background='#ffffff' color='#000000'>Mgh</span> ${MGH} <span background='#ffffff' color='#000000'>Isy</span> ${ISY}"
     echo "$HTML_LINE" > "$STATE_DIR/reminder.tmp.html"
 
     # 5. Atomic moves to prevent UI read errors

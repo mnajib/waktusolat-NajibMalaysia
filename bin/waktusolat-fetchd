@@ -89,15 +89,21 @@ on_term() {
 }
 trap on_term SIGTERM SIGINT
 
-# --- intervals ---------------------------------------------------------
+# --- intervals & adaptive backoff config ------------------------------------
 INTERVAL_NORMAL=$(( 60 * 60 * 3 ))    # 3h: cadence after a good direct JAKIM fetch
-INTERVAL_RETRY=$(( 60 * 1 ))          # 1m: cadence after a failed direct JAKIM fetch
-INTERVAL_AGGREGATOR=$(( 60 * 5 ))     # 5m: cadence for polling the aggregator -- cheap
-                                       #     LAN call, and lets a traveling host (parang)
-                                       #     re-sync quickly once it's back home.
+INTERVAL_AGGREGATOR=$(( 60 * 5 ))     # 5m: cadence for polling local aggregator
+MIN_RETRY_INTERVAL=30                 # 30s: initial retry backoff on failure
+MAX_RETRY_INTERVAL=900                # 15m: maximum cap for backoff retries
 
-# do_direct_fetch: the unchanged origin-role pipeline, also used as the
-# client role's fallback when the aggregator can't be reached.
+current_retry_interval=$MIN_RETRY_INTERVAL
+
+calculate_jitter() {
+    # Returns a random integer between 1 and 10 seconds to avoid fixed-interval sync collisions
+    echo $(( RANDOM % 10 + 1 ))
+}
+
+# do_direct_fetch: origin-role pipeline, also used as client-role fallback.
+# Sets $ERROR to true/false depending on execution.
 do_direct_fetch() {
     resetData
     fetchDataZone "$zone"
@@ -106,12 +112,12 @@ do_direct_fetch() {
     log_debug "ERROR --> ${ERROR}"
 
     if $ERROR; then
-        log_debug "Fetch/parse failed: falling back to last good backup, shortening retry interval"
+        log_warn "Direct fetch/parse failed for zone ${zone}: restoring backup cache and setting is_stale=true"
         resetData
         getOldGoodFetchData
         extractData
     else
-        log_debug "Fetch OK: backing up raw data"
+        log_debug "Direct fetch OK: backing up raw data"
         doBackup
     fi
 
@@ -130,14 +136,41 @@ while $running; do
         if impure_try_fetch_from_aggregator "$AGGREGATOR_URL" "$zone" "$AGGREGATOR_TIMEOUT" "$NEUTRAL_DATA_FILE"; then
             log_info "Data refreshed via aggregator"
             interval=$INTERVAL_AGGREGATOR
+            current_retry_interval=$MIN_RETRY_INTERVAL  # Reset backoff on aggregator success
         else
             log_info "Aggregator unreachable, falling back to direct JAKIM fetch"
             do_direct_fetch
-            interval=$( $ERROR && echo "$INTERVAL_RETRY" || echo "$INTERVAL_NORMAL" )
+            if $ERROR; then
+                jitter=$(calculate_jitter)
+                interval=$(( current_retry_interval + jitter ))
+                log_warn "Direct fetch failed. Backoff retry scheduled in ${interval}s (base interval: ${current_retry_interval}s)"
+
+                # Double interval for next retry, capped at MAX_RETRY_INTERVAL
+                current_retry_interval=$(( current_retry_interval * 2 ))
+                if (( current_retry_interval > MAX_RETRY_INTERVAL )); then
+                    current_retry_interval=$MAX_RETRY_INTERVAL
+                fi
+            else
+                interval=$INTERVAL_NORMAL
+                current_retry_interval=$MIN_RETRY_INTERVAL  # Reset backoff on direct fetch success
+            fi
         fi
     else
         do_direct_fetch
-        interval=$( $ERROR && echo "$INTERVAL_RETRY" || echo "$INTERVAL_NORMAL" )
+        if $ERROR; then
+            jitter=$(calculate_jitter)
+            interval=$(( current_retry_interval + jitter ))
+            log_warn "Direct fetch failed. Backoff retry scheduled in ${interval}s (base interval: ${current_retry_interval}s)"
+
+            # Double interval for next retry, capped at MAX_RETRY_INTERVAL
+            current_retry_interval=$(( current_retry_interval * 2 ))
+            if (( current_retry_interval > MAX_RETRY_INTERVAL )); then
+                current_retry_interval=$MAX_RETRY_INTERVAL
+            fi
+        else
+            interval=$INTERVAL_NORMAL
+            current_retry_interval=$MIN_RETRY_INTERVAL  # Reset backoff on direct fetch success
+        fi
     fi
 
     log_debug "Sleeping ${interval}s until next fetch cycle"
