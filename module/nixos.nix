@@ -127,6 +127,28 @@ in {
       //
 
       # 3.2 Per-second tmpfs State Formatter (Reads local cache -> Writes /run/waktusolat/)
+      #(lib.listToAttrs (map (zone: {
+      #  name = "waktusolat-reminder-${zone}";
+      #  value = {
+      #    description = "Waktu Solat State Formatter (${zone})";
+      #    wantedBy = [ "multi-user.target" ];
+      #
+      #    serviceConfig = {
+      #      Type = "simple";
+      #      ExecStart = "${waktusolatPackages.reminder}/bin/waktusolat-reminder --mode system --zone ${zone}";
+      #      Restart = "always";
+      #      RestartSec = "3";
+      #      RuntimeDirectory = "waktusolat"; # Mounts /run/waktusolat in tmpfs
+      #
+      #      DynamicUser = true;
+      #      NoNewPrivileges = true;
+      #      ProtectSystem = "strict";
+      #      ProtectHome = true;
+      #    };
+      #  };
+      #}) (if cfg.reminder.enable then cfg.zones else [])))
+      #
+      # 3.2 Per-second tmpfs State Formatter (Reads local cache -> Writes /run/waktusolat/)
       (lib.listToAttrs (map (zone: {
         name = "waktusolat-reminder-${zone}";
         value = {
@@ -136,6 +158,10 @@ in {
           serviceConfig = {
             Type = "simple";
             ExecStart = "${waktusolatPackages.reminder}/bin/waktusolat-reminder --mode system --zone ${zone}";
+            Environment = [
+              "WAKTUSOLAT_DATA_DIR=${if cfg.aggregator.enable then cfg.aggregator.dataDir else cfg.dataDir}"
+              "WAKTUSOLAT_LOGLEVEL=${cfg.logLevel}"
+            ];
             Restart = "always";
             RestartSec = "3";
             RuntimeDirectory = "waktusolat"; # Mounts /run/waktusolat in tmpfs
