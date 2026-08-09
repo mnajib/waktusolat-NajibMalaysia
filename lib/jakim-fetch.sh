@@ -1,18 +1,8 @@
 #!/usr/bin/env bash
 # lib/jakim-fetch.sh
 #
-# PORTED from xmonad-config-NajibMalaysia bin/lib/waktusolatlib.sh.
-# Kept: resetData, fetchDataZone, extractData, checkData, doBackup,
-#       getOldGoodFetchData -- these are the "talk to JAKIM and validate"
-#       responsibilities, unchanged in behaviour.
-# REMOVED: everything display/formatting related (namaBulanH, namaBulanM,
-#       nomHari, namaHariBM, all printWaktuSolatFor*, formatWaktuSolatForXmobar*,
-#       and every dead/commented alternate-formatter function). Those belong
-#       to renderers (bin/waktusolat-render-*), not the fetcher -- the fetcher
-#       must not know xmobar's <fc=...> syntax exists.
-# ADDED: pure_build_prayers_json, impure_write_neutral_json -- these replace
-#       ONELINE/pushStringToFile with a single canonical JSON file that any
-#       renderer (xmobar, waybar, ironbar, eww, ...) can read independently.
+# Copyright (c) 2026 waktusolat-NajibMalaysia
+# Licensed under the BSD 3-Clause License. See LICENSE file for details.
 
 # Guard clause
 [[ "${_JAKIM_FETCH_SH_INCLUDED:-}" == "true" ]] && return
@@ -21,36 +11,34 @@ declare -r _JAKIM_FETCH_SH_INCLUDED="true"
 : "${USER:=$(id -un)}"
 
 # --- File locations -----------------------------------------------------
-# RENAMED from FILE1/FILE2/FILE3 (old xmonad-config names) to self-describing
-# names. FILE2 (old one-line xmobar-formatted result) is GONE -- that job now
-# belongs to bin/waktusolat-render-xmobar reading NEUTRAL_DATA_FILE.
-#
-# These top-level defaults are single-zone, $USER-scoped, and only meant for
-# waktusolat-cli's simple ad-hoc "just fetch me one zone right now" use.
-# waktusolat-fetchd calls init_waktusolat_paths() below instead, since it
-# needs zone-aware paths (a host may run more than one zone) and a
-# configurable NEUTRAL_DATA_FILE directory (/var/lib on the aggregator host,
-# /var/cache on every other host -- see module/nixos-*.nix).
-RAW_FETCH_FILE="/tmp/${USER}-waktusolat-raw.json"        # was: FILE1
-RAW_BACKUP_FILE="/tmp/${USER}-waktusolat-raw.json.bak"   # was: FILE3
-NEUTRAL_DATA_FILE="/tmp/${USER}-waktusolat-data.json"    # NEW: canonical output, DE-agnostic
+RAW_FETCH_FILE="/tmp/${USER}-waktusolat-raw.json"
+RAW_BACKUP_FILE="/tmp/${USER}-waktusolat-raw.json.bak"
+NEUTRAL_DATA_FILE="/tmp/${USER}-waktusolat-data.json"
+NEUTRAL_DATA_FILE_SECONDARY=""
 
-# init_waktusolat_paths <zone> <data_dir>
-# Overrides RAW_FETCH_FILE/RAW_BACKUP_FILE/NEUTRAL_DATA_FILE to be specific
-# to <zone>, with the neutral output written under <data_dir>/<zone>.json.
-# Scratch files (raw fetch + backup) stay under /tmp, keyed by zone so two
-# zones running on the same host (or same $USER) don't clobber each other.
+# init_waktusolat_paths <zone> <data_dir> [secondary_data_dir]
+# Overrides paths to be specific to <zone>, with the primary neutral output
+# written under <data_dir>/<zone>.json, and optional secondary output written
+# under <secondary_data_dir>/<zone>.json.
 init_waktusolat_paths() {
     local zone="$1"
     local data_dir="$2"
+    local secondary_data_dir="${3:-}"
+
     RAW_FETCH_FILE="/tmp/${USER}-waktusolat-raw-${zone}.json"
     RAW_BACKUP_FILE="/tmp/${USER}-waktusolat-raw-${zone}.json.bak"
     NEUTRAL_DATA_FILE="${data_dir}/${zone}.json"
-    log_debug "init_waktusolat_paths: zone=${zone} data_dir=${data_dir} NEUTRAL_DATA_FILE=${NEUTRAL_DATA_FILE}"
+
+    if [[ -n "$secondary_data_dir" ]]; then
+        NEUTRAL_DATA_FILE_SECONDARY="${secondary_data_dir}/${zone}.json"
+    else
+        NEUTRAL_DATA_FILE_SECONDARY=""
+    fi
+
+    log_debug "init_waktusolat_paths: zone=${zone} data_dir=${data_dir} NEUTRAL_DATA_FILE=${NEUTRAL_DATA_FILE} SECONDARY=${NEUTRAL_DATA_FILE_SECONDARY}"
 }
 
-# --- Global state (populated by extractData, consumed by checkData /
-# impure_write_neutral_json) ---------------------------------------------
+# --- Global state -------------------------------------------------------
 NAMASOLAT=()
 MASASOLAT=()
 ZON=""
@@ -71,8 +59,6 @@ resetData() {
     log_debug "End resetData()"
 }
 
-# fetchDataZone <zone>
-# Ported verbatim from waktusolatlib.sh (the newer, CloudFront-403-aware version).
 fetchDataZone() {
     local zone="$1"
     log_debug "Start fetchDataZone() for zone: $zone"
@@ -91,8 +77,6 @@ fetchDataZone() {
     log_debug "End fetchDataZone()"
 }
 
-# extractData: parse RAW_FETCH_FILE (JAKIM JSON) into NAMASOLAT/MASASOLAT/ZON/etc.
-# Ported verbatim from waktusolatlib.sh's jq-based extractData().
 extractData() {
     log_debug "Start extractData()"
 
@@ -131,8 +115,6 @@ extractData() {
     log_debug "End extractData()"
 }
 
-# checkData: validate that extractData() produced exactly the 7 expected
-# prayer entries, in the expected order. Ported verbatim.
 checkData() {
     log_debug "Start checkData()"
 
@@ -168,9 +150,6 @@ doBackup() {
 getOldGoodFetchData() {
     log_debug "Start getOldGoodFetchData()"
     if [[ ! -s "$RAW_BACKUP_FILE" ]]; then
-        # No backup exists yet -- e.g. this is the very first fetch cycle
-        # ever, before any successful fetch has happened. Leave ERROR=true
-        # (already set by the caller) rather than crashing under set -e.
         log_debug "No backup file at ${RAW_BACKUP_FILE} yet -- nothing to fall back to"
         return 0
     fi
@@ -179,11 +158,6 @@ getOldGoodFetchData() {
     log_debug "End getOldGoodFetchData()"
 }
 
-# --- NEW: neutral JSON output, DE-agnostic ------------------------------
-
-# pure_build_prayers_json: turn NAMASOLAT[]/MASASOLAT[] into a JSON array.
-# "pure" in the sense that it only reads globals and returns a string --
-# it performs no file I/O of its own (jq itself has no side effects here).
 pure_build_prayers_json() {
     local json="[]"
     local i
@@ -194,9 +168,6 @@ pure_build_prayers_json() {
     echo "$json"
 }
 
-# impure_write_neutral_json: write NEUTRAL_DATA_FILE atomically (write to a
-# temp file, then `mv` -- mv within the same /tmp filesystem is an atomic
-# rename, so a renderer can never read a half-written file).
 impure_write_neutral_json() {
     log_debug "Start impure_write_neutral_json()"
 
@@ -219,9 +190,18 @@ impure_write_neutral_json() {
           day:$day, server_time:$server_time, is_stale:$is_stale, prayers:$prayers}' \
         > "$out_tmp"
 
-    # Explicit rather than relying on the process umask -- see the matching
-    # fix in lib/aggregator-client.sh for why this can't be left implicit.
     chmod 0644 "$out_tmp"
+
+    if [[ -n "${NEUTRAL_DATA_FILE_SECONDARY:-}" ]]; then
+        local sec_dir
+        sec_dir="$(dirname "$NEUTRAL_DATA_FILE_SECONDARY")"
+        mkdir -p "$sec_dir"
+        local sec_tmp="${NEUTRAL_DATA_FILE_SECONDARY}.tmp.$$"
+        cp "$out_tmp" "$sec_tmp"
+        chmod 0644 "$sec_tmp"
+        mv "$sec_tmp" "$NEUTRAL_DATA_FILE_SECONDARY"
+        log_debug "Wrote secondary target ${NEUTRAL_DATA_FILE_SECONDARY}"
+    fi
 
     mv "$out_tmp" "$NEUTRAL_DATA_FILE"
 

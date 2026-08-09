@@ -3,38 +3,6 @@
 #
 # Copyright (c) 2026 waktusolat-NajibMalaysia
 # Licensed under the BSD 3-Clause License. See LICENSE file for details.
-#
-#  Singleton daemon: get waktu solat data for one zone, write a canonical,
-#  window-manager-agnostic JSON file at <data_dir>/<zone>.json.
-#
-#  CHANGED (multi-host support): this now runs in one of two roles,
-#  selected purely by whether WAKTUSOLAT_AGGREGATOR_URL is set:
-#
-#    - "origin" role (WAKTUSOLAT_AGGREGATOR_URL unset): talks to JAKIM
-#      directly, exactly as before. Intended for exactly ONE host on your
-#      network (e.g. nyxora) -- see module/nixos-aggregator.nix.
-#
-#    - "client" role (WAKTUSOLAT_AGGREGATOR_URL set): each cycle, first
-#      tries the aggregator over HTTP; only falls back to a direct JAKIM
-#      fetch if the aggregator is unreachable (e.g. a laptop away from the
-#      home LAN) -- see module/nixos-client.nix. This means every host
-#      except the aggregator itself is a JAKIM client only when it HAS to
-#      be, not by default.
-#
-#  Both roles are still WM-agnostic and still singleton-guarded by flock,
-#  same as before -- multi-host support is additive, not a replacement for
-#  the earlier "don't fetch twice on one host" fix.
-#
-#  by Muhammad Najib Bin Ibrahim <mnajib@gmail.com>
-#
-#  Usage:
-#      waktusolat-fetchd SGR01
-#
-#  Env vars:
-#      WAKTUSOLAT_AGGREGATOR_URL    e.g. http://nyxora:8089 (client role if set)
-#      WAKTUSOLAT_AGGREGATOR_TIMEOUT  seconds, default 3
-#      WAKTUSOLAT_DATA_DIR           default /var/cache/waktusolat
-#      WAKTUSOLAT_LOGLEVEL           SILENT|ERROR|WARN|INFO|DEBUG, default INFO
 
 set -euo pipefail
 umask 022
@@ -60,8 +28,23 @@ if [[ -z "$zone" ]]; then
     exit 1
 fi
 
-mkdir -p "$DATA_DIR"
-init_waktusolat_paths "$zone" "$DATA_DIR"
+# Ensure both primary data dir and secondary cache path are defined for aggregator/origin role
+PRIMARY_DIR="$DATA_DIR"
+SECONDARY_DIR=""
+
+if [[ -z "$AGGREGATOR_URL" ]]; then
+    # In origin/aggregator mode, guarantee sync to /var/cache/waktusolat alongside primary
+    if [[ "$PRIMARY_DIR" == "/var/lib/waktusolat" ]]; then
+        SECONDARY_DIR="/var/cache/waktusolat"
+    elif [[ "$PRIMARY_DIR" == "/var/cache/waktusolat" ]]; then
+        SECONDARY_DIR="/var/lib/waktusolat"
+    fi
+fi
+
+mkdir -p "$PRIMARY_DIR"
+[[ -n "$SECONDARY_DIR" ]] && mkdir -p "$SECONDARY_DIR"
+
+init_waktusolat_paths "$zone" "$PRIMARY_DIR" "$SECONDARY_DIR"
 
 set_log_file "/tmp/${USER}-waktusolat-fetchd-${zone}.log"
 set_log_level "$LOGLEVEL"
@@ -72,7 +55,7 @@ else
     log_info "Role: origin (fetching JAKIM directly)"
 fi
 
-# --- singleton guard (per zone, since a host could run more than one) ------
+# --- singleton guard (per zone) --------------------------------------------
 LOCKFILE="/tmp/${USER}-waktusolat-fetchd-${zone}.lock"
 exec 9>"$LOCKFILE"
 if ! flock -n 9; then
@@ -98,12 +81,9 @@ MAX_RETRY_INTERVAL=900                # 15m: maximum cap for backoff retries
 current_retry_interval=$MIN_RETRY_INTERVAL
 
 calculate_jitter() {
-    # Returns a random integer between 1 and 10 seconds to avoid fixed-interval sync collisions
     echo $(( RANDOM % 10 + 1 ))
 }
 
-# do_direct_fetch: origin-role pipeline, also used as client-role fallback.
-# Sets $ERROR to true/false depending on execution.
 do_direct_fetch() {
     resetData
     fetchDataZone "$zone"
@@ -136,7 +116,7 @@ while $running; do
         if impure_try_fetch_from_aggregator "$AGGREGATOR_URL" "$zone" "$AGGREGATOR_TIMEOUT" "$NEUTRAL_DATA_FILE"; then
             log_info "Data refreshed via aggregator"
             interval=$INTERVAL_AGGREGATOR
-            current_retry_interval=$MIN_RETRY_INTERVAL  # Reset backoff on aggregator success
+            current_retry_interval=$MIN_RETRY_INTERVAL
         else
             log_info "Aggregator unreachable, falling back to direct JAKIM fetch"
             do_direct_fetch
@@ -145,14 +125,13 @@ while $running; do
                 interval=$(( current_retry_interval + jitter ))
                 log_warn "Direct fetch failed. Backoff retry scheduled in ${interval}s (base interval: ${current_retry_interval}s)"
 
-                # Double interval for next retry, capped at MAX_RETRY_INTERVAL
                 current_retry_interval=$(( current_retry_interval * 2 ))
                 if (( current_retry_interval > MAX_RETRY_INTERVAL )); then
                     current_retry_interval=$MAX_RETRY_INTERVAL
                 fi
             else
                 interval=$INTERVAL_NORMAL
-                current_retry_interval=$MIN_RETRY_INTERVAL  # Reset backoff on direct fetch success
+                current_retry_interval=$MIN_RETRY_INTERVAL
             fi
         fi
     else
@@ -162,14 +141,13 @@ while $running; do
             interval=$(( current_retry_interval + jitter ))
             log_warn "Direct fetch failed. Backoff retry scheduled in ${interval}s (base interval: ${current_retry_interval}s)"
 
-            # Double interval for next retry, capped at MAX_RETRY_INTERVAL
             current_retry_interval=$(( current_retry_interval * 2 ))
             if (( current_retry_interval > MAX_RETRY_INTERVAL )); then
                 current_retry_interval=$MAX_RETRY_INTERVAL
             fi
         else
             interval=$INTERVAL_NORMAL
-            current_retry_interval=$MIN_RETRY_INTERVAL  # Reset backoff on direct fetch success
+            current_retry_interval=$MIN_RETRY_INTERVAL
         fi
     fi
 
