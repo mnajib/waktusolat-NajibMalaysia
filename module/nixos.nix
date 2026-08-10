@@ -91,9 +91,9 @@ in {
       lib.optionals (cfg.aggregator.enable && cfg.aggregator.openFirewallPort) [ cfg.aggregator.port ];
 
     environment.systemPackages = [
-      waktusolatPackages.render-xmobar
-      waktusolatPackages.render-waybar
-      waktusolatPackages.cli
+      #waktusolatPackages.render-xmobar
+      #waktusolatPackages.render-waybar
+      #waktusolatPackages.cli
     ];
 
     # 3. Services setup
@@ -159,6 +159,7 @@ in {
             Type = "simple";
             ExecStart = "${waktusolatPackages.reminder}/bin/waktusolat-reminder --mode system --zone ${zone}";
             Environment = [
+              "HOME=/var/empty"
               "WAKTUSOLAT_DATA_DIR=${if cfg.aggregator.enable then cfg.aggregator.dataDir else cfg.dataDir}"
               "WAKTUSOLAT_LOGLEVEL=${cfg.logLevel}"
             ];
@@ -166,10 +167,17 @@ in {
             RestartSec = "3";
             RuntimeDirectory = "waktusolat"; # Mounts /run/waktusolat in tmpfs
 
-            DynamicUser = true;
+            #DynamicUser = true;
+            User = "waktusolat";
+            Group = "waktusolat";
+
+            PrivateTmp = false;
             NoNewPrivileges = true;
             ProtectSystem = "strict";
             ProtectHome = true;
+            ReadOnlyPaths = [
+              (if cfg.aggregator.enable then cfg.aggregator.dataDir else cfg.dataDir)
+            ];
           };
         };
       }) (if cfg.reminder.enable then cfg.zones else [])))

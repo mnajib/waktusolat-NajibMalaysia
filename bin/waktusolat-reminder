@@ -1,5 +1,10 @@
 #!/usr/bin/env bash
 # bin/waktusolat-reminder
+#
+# Copyright (c) 2026 waktusolat-NajibMalaysia
+# Licensed under the BSD 3-Clause License. See LICENSE file for details.
+
+set -euo pipefail
 
 MODE="user"
 ZONE="SGR01"
@@ -13,7 +18,12 @@ while [[ "$#" -gt 0 ]]; do
     esac
 done
 
-# Dynamic Data Directory Resolution
+# Dynamic Directory Resolution
+LIB_DIR="${WAKTUSOLAT_LIB_DIR:-$(dirname "$(readlink -f "$0")")/../lib}"
+FORMATTER_DIR="${WAKTUSOLAT_FORMATTER_DIR:-${LIB_DIR}/formatters}"
+#USER_FORMATTER_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/waktusolat/formatters"
+USER_FORMATTER_DIR="${XDG_CONFIG_HOME:-${HOME:-/var/empty}/.config}/waktusolat/formatters"
+
 DATA_DIR="${WAKTUSOLAT_DATA_DIR:-/var/cache/waktusolat}"
 CACHE_FILE="${DATA_DIR}/${ZONE}.json"
 
@@ -62,6 +72,22 @@ get_next_hijri_day_name() {
     esac
 }
 
+# Execute active plugin scripts
+run_formatters() {
+    local plugin
+    if [[ -d "$FORMATTER_DIR" ]]; then
+        for plugin in "$FORMATTER_DIR"/*.sh; do
+            [[ -x "$plugin" ]] && "$plugin"
+        done
+    fi
+
+    if [[ -d "$USER_FORMATTER_DIR" ]]; then
+        for plugin in "$USER_FORMATTER_DIR"/*.sh; do
+            [[ -x "$plugin" ]] && "$plugin"
+        done
+    fi
+}
+
 while true; do
     if [[ ! -f "$CACHE_FILE" ]]; then
         echo '{"error": "Cache file missing", "is_stale": true}' > "$STATE_DIR/reminder.tmp.json"
@@ -80,7 +106,6 @@ while true; do
     TOGGLE=$(( $(date +%s) % 2 ))
 
     # Single-pass parsing with jq
-    # Inline IFS=$'\t' guarantees splitting happens solely on TSV tabs.
     IFS=$'\t' read -r IS_STALE SERVER_TIME MDATE HDATE DAY FJR SYU ZHR ASR MGH ISY < <(
         jq -r '
           def p(bm; key):
@@ -121,7 +146,7 @@ while true; do
     H_DAY_NAME=$(get_hijri_day_name "$DAY")
     H_NEXT_DAY_NAME=$(get_next_hijri_day_name "$H_DAY_NAME")
 
-    # Calculate active prayer highlight color (#ffbf00 active vs #7fffd4 default)
+    # Calculate active prayer highlight colors
     NOW_HM=$(date +"%H:%M")
     COLOR_FJR="#7fffd4"; COLOR_SYU="#7fffd4"; COLOR_ZHR="#7fffd4"
     COLOR_ASR="#7fffd4"; COLOR_MGH="#7fffd4"; COLOR_ISY="#7fffd4"
@@ -142,70 +167,13 @@ while true; do
         COLOR_ISY="#ffbf00"
     fi
 
-    # Prepare OLD badges based on is_stale state
-    OLD_TXT=""
-    OLD_HTML=""
-    OLD_CLI=""
-    if [[ "$IS_STALE" == "true" ]]; then
-        OLD_TXT="<fc=#ffffff,#ff4d4d> OLD </fc> "
-        OLD_HTML="<span background='#ff4d4d' color='#ffffff'> OLD </span> "
-        OLD_CLI="[OLD DATA] "
-    fi
+    # Export context for child formatters
+    export ZONE SERVER_TIME IS_STALE DAY FJR SYU ZHR ASR MGH ISY TOGGLE \
+           G_DATE_ISO G_MONTH_ABB G_DAY_ABB HDATE H_MONTH_NAME H_DAY_NAME \
+           H_NEXT_DAY_NAME COLOR_FJR COLOR_SYU COLOR_ZHR COLOR_ASR COLOR_MGH COLOR_ISY STATE_DIR
 
-    # 1. Format JSON (reminder.json)
-    jq -n \
-      --arg zone "$ZONE" \
-      --arg stime "$SERVER_TIME" \
-      --argjson is_stale "$IS_STALE" \
-      --arg day "$DAY" \
-      --arg fjr "$FJR" \
-      --arg syu "$SYU" \
-      --arg zhr "$ZHR" \
-      --arg asr "$ASR" \
-      --arg mgh "$MGH" \
-      --arg isy "$ISY" \
-      --arg toggle "$TOGGLE" \
-      '{
-        zone: $zone,
-        server_time: $stime,
-        is_stale: $is_stale,
-        day: $day,
-        subuh: $fjr,
-        syuruk: $syu,
-        zohor: $zhr,
-        asar: $asr,
-        maghrib: $mgh,
-        isyak: $isy,
-        toggle: $toggle
-      }' > "$STATE_DIR/reminder.tmp.json"
-
-    # 2. Format CLI (reminder.cli)
-    {
-      echo "----------------------------------------"
-      echo " Waktu Solat : $ZONE ($DAY, $G_DATE_ISO / $HDATE) ${OLD_CLI}"
-      echo "----------------------------------------"
-      echo " Subuh      : $FJR"
-      echo " Syuruk     : $SYU"
-      echo " Zohor      : $ZHR"
-      echo " Asar       : $ASR"
-      echo " Maghrib    : $MGH"
-      echo " Isyak      : $ISY"
-      echo "----------------------------------------"
-    } > "$STATE_DIR/reminder.tmp.cli"
-
-    # 3. Format TXT / xmobar (reminder.txt)
-    LINE="<fc=#888888>Data ${SERVER_TIME};</fc> ${OLD_TXT}<fc=#ff66ff>(${ZONE}</fc> <fc=#00ffff>(${G_MONTH_ABB}</fc> <fc=#00ffff>${G_DATE_ISO}</fc> <fc=#00ffff>${G_DAY_ABB}</fc> <fc=#ffff00>(${H_MONTH_NAME}</fc> <fc=#ffff00>${HDATE}</fc> <fc=#ffff00>${H_DAY_NAME}</fc> <fc=#000000,#ffffff>Fjr</fc><fc=#000000,${COLOR_FJR}> ${FJR} </fc> <fc=#000000,#ffffff>Syu</fc><fc=#000000,${COLOR_SYU}> ${SYU} </fc> <fc=#000000,#ffffff>Zhr</fc><fc=#000000,${COLOR_ZHR}> ${ZHR} </fc> <fc=#000000,#ffffff>Asr</fc><fc=#000000,${COLOR_ASR}> ${ASR} </fc><fc=#ffff00>)</fc> <fc=#ffff00>(${H_NEXT_DAY_NAME}</fc> <fc=#000000,#ffffff>Mgh</fc><fc=#000000,${COLOR_MGH}> ${MGH} </fc> <fc=#000000,#ffffff>Isy</fc><fc=#000000,${COLOR_ISY}> ${ISY} </fc><fc=#ffff00>)</fc><fc=#00ffff>)</fc><fc=#ff66ff>)</fc>"
-    echo "$LINE" > "$STATE_DIR/reminder.tmp.txt"
-
-    # 4. Format HTML / Waybar (reminder.html)
-    HTML_LINE="${OLD_HTML}<span color='#ff66ff'>${ZONE}</span> <span background='#ffffff' color='#000000'>Fjr</span> ${FJR} <span background='#ffffff' color='#000000'>Syu</span> ${SYU} <span background='#ffffff' color='#000000'>Zhr</span> ${ZHR} <span background='#ffffff' color='#000000'>Asr</span> ${ASR} <span background='#ffffff' color='#000000'>Mgh</span> ${MGH} <span background='#ffffff' color='#000000'>Isy</span> ${ISY}"
-    echo "$HTML_LINE" > "$STATE_DIR/reminder.tmp.html"
-
-    # 5. Atomic moves to prevent UI read errors
-    mv "$STATE_DIR/reminder.tmp.json" "$STATE_DIR/reminder.json"
-    mv "$STATE_DIR/reminder.tmp.cli"  "$STATE_DIR/reminder.cli"
-    mv "$STATE_DIR/reminder.tmp.txt"  "$STATE_DIR/reminder.txt"
-    mv "$STATE_DIR/reminder.tmp.html" "$STATE_DIR/reminder.html"
+    # Execute plugins
+    run_formatters
 
     sleep 1
 done

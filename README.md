@@ -51,10 +51,10 @@ To minimize WAN traffic and prevent redundant API queries to JAKIM, the system s
   3. Writes persistent local cache to: `/var/cache/waktusolat/<ZONE>.json`
   4. `systemd` service (`waktusolat-reminder-<zone>`) reads local cache every
      second and updates `tmpfs`:
-     - `/run/waktusolat/reminder.json`
-     - `/run/waktusolat/reminder.cli`
-     - `/run/waktusolat/reminder.txt`   (xmobar markup)
-     - `/run/waktusolat/reminder.html`  (Waybar / Pango markup)
+     - `/run/waktusolat/reminder.json`  (json.sh)
+     - `/run/waktusolat/reminder.cli`   (cli.sh)
+     - `/run/waktusolat/reminder.txt`   (xmobar.sh)
+     - `/run/waktusolat/reminder.html`  (waybar.sh)
 
 ### [UI Layer (xmobar / Waybar)]
   - Status bars perform a lightweight 'cat' on `/run/waktusolat/reminder.{txt,html}`
@@ -106,14 +106,22 @@ To minimize WAN traffic and prevent redundant API queries to JAKIM, the system s
                            │ Reads JSON into memory  │
                            └────────────┬────────────┘
                                         │
-                                        ▼
+                                        ▼ Exports Context Environment
+                                        │
+                      ┌─────────────────┴─────────────────┐
+                      │ Executable Formatter Plugins      │
+                      │ lib/formatters/*.sh               │
+                      │ ~/.config/waktusolat/formatters/* │
+                      └─────────────────┬─────────────────┘
+                                        │
+                                        ▼ Writes outputs atomically
     ┌───────────────────────────────────────────────────────────────────────┐
     │ RAM Disk (tmpfs)                                                      │
     │ /run/waktusolat/                                                      │
-    │ - reminder.json                                                       │
-    │ - reminder.cli                                                        │
-    │ - reminder.txt (xmobar)                                               │
-    │ - reminder.html (waybar)                                              │
+    │ - reminder.json           (json.sh)                                   │
+    │ - reminder.cli            (cli.sh)                                    │
+    │ - reminder.txt (xmobar)   (xmobar.sh)                                 │
+    │ - reminder.html (waybar)  (waybar.sh)                                 │
     ├───────────────────────────────────────────────────────────────────────┤
     │ • Storage Media: RAM Disk (tmpfs)                                     │
     │ • Write Cadence: Every 1 second                                       │
@@ -223,6 +231,7 @@ For isolated, single-user desktop setups that do not participate in a multi-host
 |`/var/cache/waktusolat/` |        Client local persistent cache (Disk)|
 |`/run/waktusolat/` |              System-level 1-second state files (RAM / tmpfs)|
 |`/run/user/<UID>/waktusolat/`|   User-level 1-second state files (RAM / tmpfs)|
+|`~/.config/waktusolat/formatters/` | Directory for user-defined custom plugin formatters |
 
 ### Binaries & Utilities
 
@@ -230,9 +239,6 @@ For isolated, single-user desktop setups that do not participate in a multi-host
 |---------------------------|---------------------------------------------------------|
 | `waktusolat-fetchd`         | Fetcher daemon (LAN aggregator primary, JAKIM fallback) |
 | `waktusolat-reminder`       |    1-second loop state formatter (JSON, CLI, TXT, HTML) |
-| `waktusolat-cli`             |   CLI tool to display prayer times directly in shell |
-| `waktusolat-render-xmobar`    |  xmobar renderer wrapper |
-| `waktusolat-render-waybar`     | Waybar renderer wrapper |
 
 ### Environment Variables Reference
 
@@ -245,6 +251,7 @@ Renderers and daemons rely on the following environment variables:
 |`WAKTUSOLAT_DATA_DIR` | Path containing output `<ZONE>.json` files | `/var/cache/waktusolat` |
 |`WAKTUSOLAT_ZONE` | Default JAKIM zone code to read or query | `SGR01` |
 |`WAKTUSOLAT_LIB_DIR` | Directory containing library scripts | Relative script path |
+|`WAKTUSOLAT_FORMATTER_DIR` | Directory containing built-in plugin formatters	| `${LIB_DIR}/formatters` |
 |`WAKTUSOLAT_LOGLEVEL` | Logging level ( `SILENT`, `ERROR`, `WARN`, `INFO`, `DEBUG` ) | `INFO` |
 
 
@@ -284,11 +291,14 @@ shellcheck lib/*.sh bin/*
 
 Additional guides and detailed module option references are available in the [`docs/`](./docs) directory:
 
-* **[NixOS Options (`docs/NIXOS-OPTIONS.md`)](./docs/NIXOS-OPTIONS.md)**  
+* **[Formatter Plugins (`docs/PLUGINS.md`)](./docs/PLUGINS.md)**
+  Guide on how the plugin system works and instructions for authoring custom formatters.
+
+* **[NixOS Options (`docs/NIXOS-OPTIONS.md`)](./docs/NIXOS-OPTIONS.md)**
   Complete reference for all system-level NixOS module options, including daemon configurations, HTTP LAN aggregator settings, and satellite client controls.
 
-* **[Home Manager Options (`docs/HOME-MANAGER-OPTIONS.md`)](./docs/HOME-MANAGER-OPTIONS.md)**  
+* **[Home Manager Options (`docs/HOME-MANAGER-OPTIONS.md`)](./docs/HOME-MANAGER-OPTIONS.md)**
   Detailed option listings for single-user environment management under Home Manager.
 
-* **[Status Bar Integrations (`docs/STATUS-BAR-INTEGRATIONS.md`)](./docs/STATUS-BAR-INTEGRATIONS.md)**  
+* **[Status Bar Integrations (`docs/STATUS-BAR-INTEGRATIONS.md`)](./docs/STATUS-BAR-INTEGRATIONS.md)**
   Setup guides and script integration examples for status bars like XMobar and Waybar.

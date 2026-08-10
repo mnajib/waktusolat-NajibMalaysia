@@ -39,6 +39,7 @@
               mkdir -p $out/bin $out/lib
               install -m755 bin/${name} $out/bin/${name}
               cp -r lib/* $out/lib/
+              find $out/lib/formatters -name '*.sh' -exec chmod +x {} +
               wrapProgram $out/bin/${name} \
                 --set WAKTUSOLAT_LIB_DIR "$out/lib" \
                 --prefix PATH : ${pkgs.lib.makeBinPath runtimeDeps}
@@ -120,9 +121,9 @@
         rec {
           fetchd        = mkScript "waktusolat-fetchd";
           reminder      = mkScript "waktusolat-reminder";
-          render-xmobar = mkScript "waktusolat-render-xmobar";
-          render-waybar = mkScript "waktusolat-render-waybar";
-          cli           = mkScript "waktusolat-cli";
+          #render-xmobar = mkScript "waktusolat-render-xmobar";
+          #render-waybar = mkScript "waktusolat-render-waybar";
+          #cli           = mkScript "waktusolat-cli";
 
           #docs = pkgs.stdenv.mkDerivation {
           #  name = "waktusolat-options-docs";
