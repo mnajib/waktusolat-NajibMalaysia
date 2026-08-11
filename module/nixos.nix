@@ -162,6 +162,7 @@ in {
               "HOME=/var/empty"
               "WAKTUSOLAT_DATA_DIR=${if cfg.aggregator.enable then cfg.aggregator.dataDir else cfg.dataDir}"
               "WAKTUSOLAT_LOGLEVEL=${cfg.logLevel}"
+              #"WAKTUSOLAT_LOG_TO_STDERR=1"
             ];
             Restart = "always";
             RestartSec = "3";

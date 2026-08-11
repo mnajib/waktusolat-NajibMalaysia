@@ -115,7 +115,7 @@ while true; do
               .prayers[key] // "-"
             end;
           [
-            (.is_stale // true | tostring),
+            (if .is_stale == null then true else .is_stale end | tostring),
             (.server_time // .last_updated // "-"),
             (.gregorian_date // .date // "-"),
             (.hijri_date // "-"),

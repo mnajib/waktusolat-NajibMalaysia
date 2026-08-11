@@ -39,7 +39,7 @@ impure_try_fetch_from_aggregator() {
     chmod 0644 "$tmp_file"
 
     if ! curl -s --fail --max-time "$timeout" "${base_url}/${zone}.json" -o "$tmp_file" 2>>"$LOG_FILE"; then
-        log_debug "Aggregator unreachable or returned a non-2xx response"
+        log_warn "Aggregator ${base_url} unreachable or returned a non-2xx response for ${zone}"
         rm -f "$tmp_file"
         return 1
     fi
@@ -50,7 +50,7 @@ impure_try_fetch_from_aggregator() {
     # something structurally wrong that a renderer can't handle.
     if ! jq -e '(.zone != null) and (.prayers | type == "array") and (.prayers | length == 7)' \
             "$tmp_file" > /dev/null 2>&1; then
-        log_debug "Aggregator response failed shape validation (not well-formed waktusolat JSON)"
+        log_warn "Aggregator response for ${zone} failed shape validation -- first 200 bytes: $(head -c 200 "$tmp_file" 2>/dev/null | tr '\n' ' ')"
         rm -f "$tmp_file"
         return 1
     fi

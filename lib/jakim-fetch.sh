@@ -70,7 +70,7 @@ fetchDataZone() {
     curl -s -k -H "$accept_hdr" -A "$agent" "$url" > "$RAW_FETCH_FILE"
 
     if grep -q "403 ERROR" "$RAW_FETCH_FILE"; then
-        log_debug "ERROR: Still getting CloudFront 403 block"
+        log_warn "Still getting CloudFront 403 block from e-solat.gov.my"
         ERROR=true
     fi
 
@@ -87,7 +87,7 @@ extractData() {
     meta_data=$(jq -r '"serverTime,\(.serverTime)\nzone,\(.zone)"' "$RAW_FETCH_FILE" 2>/dev/null || true)
 
     if [[ -z "$internal_data" ]]; then
-        log_debug "ERROR: jq failed to parse JSON in $RAW_FETCH_FILE"
+        log_warn "jq failed to parse JSON in ${RAW_FETCH_FILE} -- first 200 bytes: $(head -c 200 "$RAW_FETCH_FILE" 2>/dev/null | tr '\n' ' ')"
         ERROR=true
         return
     fi
@@ -126,14 +126,14 @@ checkData() {
            [ "${NAMASOLAT[2]}" != "Syuruk" ] || [ "${NAMASOLAT[3]}" != "Zohor" ] || \
            [ "${NAMASOLAT[4]}" != "Asar" ] || [ "${NAMASOLAT[5]}" != "Maghrib" ] || \
            [ "${NAMASOLAT[6]}" != "Isyak" ]; then
-            log_debug "ERROR #001: Nama waktu solat tak sama"
+            log_warn "checkData: prayer names/order don't match expected schema -- got: ${NAMASOLAT[*]}"
             ERROR=true
         else
             log_debug "No error detected."
             ERROR=false
         fi
     else
-        log_debug "ERROR #002: Array length NOT as we expected : $arrayLength"
+        log_warn "checkData: expected 7 prayers, got ${arrayLength}"
         ERROR=true
     fi
 
@@ -150,7 +150,7 @@ doBackup() {
 getOldGoodFetchData() {
     log_debug "Start getOldGoodFetchData()"
     if [[ ! -s "$RAW_BACKUP_FILE" ]]; then
-        log_debug "No backup file at ${RAW_BACKUP_FILE} yet -- nothing to fall back to"
+        log_warn "No backup file at ${RAW_BACKUP_FILE} yet -- nothing to fall back to (first boot, or no successful fetch yet)"
         return 0
     fi
     log_debug "Get previous backup fetched source from file ${RAW_BACKUP_FILE}"

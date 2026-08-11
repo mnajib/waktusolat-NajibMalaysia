@@ -65,7 +65,11 @@ log() {
     esac
 
     if (( mode_level_value >= message_level_value )); then
-        echo "$(date "+%F %T") ${message_level}: ${message}" >> "$LOG_FILE"
+
+        local line="$(date "+%F %T") ${message_level}: ${message}"
+        echo "$line" >> "$LOG_FILE"
+        #[[ "${WAKTUSOLAT_LOG_TO_STDERR:-0}" == "1" ]] && echo "$line" >&2
+
     fi
 }
 
