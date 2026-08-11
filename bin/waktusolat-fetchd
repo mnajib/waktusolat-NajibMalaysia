@@ -84,6 +84,26 @@ calculate_jitter() {
     echo $(( RANDOM % 10 + 1 ))
 }
 
+do_direct_fetch_old() {
+    resetData
+    fetchDataZone "$zone"
+    extractData
+    checkData
+    log_debug "ERROR --> ${ERROR}"
+
+    if $ERROR; then
+        log_warn "Direct fetch/parse failed for zone ${zone}: restoring backup cache and setting is_stale=true"
+        resetData
+        getOldGoodFetchData
+        extractData
+    else
+        log_debug "Direct fetch OK: backing up raw data"
+        doBackup
+    fi
+
+    impure_write_neutral_json
+}
+
 do_direct_fetch() {
     resetData
     fetchDataZone "$zone"
@@ -99,6 +119,25 @@ do_direct_fetch() {
     else
         log_debug "Direct fetch OK: backing up raw data"
         doBackup
+    fi
+
+    # Write out the raw JAKIM JSON response for external consumers
+    if [[ -f "$RAW_FETCH_FILE" ]]; then
+        local raw_dest="${PRIMARY_DIR}/raw-${zone}.json"
+        local raw_dest_general="${PRIMARY_DIR}/raw.json"
+
+        cp "$RAW_FETCH_FILE" "$raw_dest"
+        chmod 0644 "$raw_dest"
+
+        # Keep a generic symlink or copy for easy un-parameterized consumption
+        cp "$RAW_FETCH_FILE" "$raw_dest_general"
+        chmod 0644 "$raw_dest_general"
+
+        if [[ -n "$SECONDARY_DIR" ]]; then
+            cp "$RAW_FETCH_FILE" "${SECONDARY_DIR}/raw-${zone}.json"
+            cp "$RAW_FETCH_FILE" "${SECONDARY_DIR}/raw.json"
+        fi
+        log_debug "Published raw JAKIM JSON to ${raw_dest}"
     fi
 
     impure_write_neutral_json

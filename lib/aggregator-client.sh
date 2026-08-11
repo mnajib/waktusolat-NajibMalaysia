@@ -21,11 +21,13 @@ declare -r _AGGREGATOR_CLIENT_SH_INCLUDED="true"
 # well-formed waktusolat JSON): leaves <dest_file> completely untouched and
 # returns 1. Callers MUST treat a non-zero return as "fall back to fetching
 # JAKIM directly" -- this function never partially writes dest_file.
-impure_try_fetch_from_aggregator() {
+impure_try_fetch_from_aggregator_old() {
     local base_url="$1"
     local zone="$2"
     local timeout="$3"
     local dest_file="$4"
+    local dest_dir
+    dest_dir="$(dirname "$dest_file")"
 
     log_debug "Trying aggregator: ${base_url}/${zone}.json (timeout ${timeout}s)"
 
@@ -56,6 +58,12 @@ impure_try_fetch_from_aggregator() {
     fi
 
     mv "$tmp_file" "$dest_file"
+
+    # Also mirror the raw files from the aggregator for local raw formatters
+    curl -s --fail --max-time "$timeout" "${base_url}/raw-${zone}.json" -o "${dest_dir}/raw-${zone}.json" 2>/dev/null || true
+    curl -s --fail --max-time "$timeout" "${base_url}/raw.json" -o "${dest_dir}/raw.json" 2>/dev/null || true
+    chmod 0644 "${dest_dir}/raw-${zone}.json" "${dest_dir}/raw.json" 2>/dev/null || true
+
     log_debug "Aggregator fetch OK, wrote ${dest_file}"
     return 0
 }

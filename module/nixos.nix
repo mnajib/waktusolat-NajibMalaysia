@@ -1,3 +1,5 @@
+# ./modules/nixos.nix
+
 { self }:
 { config, lib, pkgs, ... }:
 
