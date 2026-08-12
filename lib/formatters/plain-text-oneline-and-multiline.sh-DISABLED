@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# lib/formatters/plain-text-oneline-and-multiline.sh
+#
+# Copyright (c) 2026 waktusolat-NajibMalaysia
+# Licensed under the BSD 3-Clause License. See LICENSE file for details.
+
+set -euo pipefail
+
+TMP_SINGLE="${STATE_DIR}/reminder.tmp-oneline.txt"
+FINAL_SINGLE="${STATE_DIR}/reminder-oneline.txt"
+
+TMP_MULTI="${STATE_DIR}/reminder.tmp-multiline.txt"
+FINAL_MULTI="${STATE_DIR}/reminder-multiline.txt"
+
+STALE_TXT=""
+if [[ "$IS_STALE" == "true" ]]; then
+    STALE_TXT="[STALE] "
+fi
+
+# 1. Single-line plain text output
+cat <<EOF > "$TMP_SINGLE"
+${STALE_TXT}${ZONE} | Subuh: ${FJR} | Syuruk: ${SYU} | Zohor: ${ZHR} | Asar: ${ASR} | Maghrib: ${MGH} | Isyak: ${ISY}
+EOF
+
+# 2. Multi-line plain text output
+cat <<EOF > "$TMP_MULTI"
+${STALE_TXT}Zone: ${ZONE}
+Date: ${G_DATE_ISO} (${G_DAY_ABB}) | Hijri: ${HDATE} ${H_MONTH_NAME}
+----------------------------------------
+Subuh:   ${FJR}
+Syuruk:  ${SYU}
+Zohor:   ${ZHR}
+Asar:    ${ASR}
+Maghrib: ${MGH}
+Isyak:   ${ISY}
+EOF
+
+mv "$TMP_SINGLE" "$FINAL_SINGLE"
+mv "$TMP_MULTI" "$FINAL_MULTI"

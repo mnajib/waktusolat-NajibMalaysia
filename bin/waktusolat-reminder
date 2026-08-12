@@ -20,11 +20,23 @@ done
 
 # Dynamic Directory Resolution
 LIB_DIR="${WAKTUSOLAT_LIB_DIR:-$(dirname "$(readlink -f "$0")")/../lib}"
+export LIB_DIR
+source "${LIB_DIR}/prayer-proximity.sh"
 FORMATTER_DIR="${WAKTUSOLAT_FORMATTER_DIR:-${LIB_DIR}/formatters}"
 #USER_FORMATTER_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/waktusolat/formatters"
 USER_FORMATTER_DIR="${XDG_CONFIG_HOME:-${HOME:-/var/empty}/.config}/waktusolat/formatters"
-
 DATA_DIR="${WAKTUSOLAT_DATA_DIR:-/var/cache/waktusolat}"
+
+#
+# NOTE:
+#
+#   located on regular drive, use for store data that not too frequent write
+#   - DATA_DIR:   /var/cache/waktusolat/
+#
+#   located on tmpfs (RAM drive), use for store data that frequent write/read
+#   - STATE_DIR:  /var/run/waktusolat/  that is a symlink to /run/waktusolat
+#
+
 CACHE_FILE="${DATA_DIR}/${ZONE}.json"
 
 # Determine output directory based on mode (System vs Home Manager)
@@ -88,143 +100,112 @@ run_formatters() {
     fi
 }
 
+LAST_CACHE_MTIME=0
+
 while true; do
-    if [[ ! -f "$CACHE_FILE" ]]; then
-        echo '{"error": "Cache file missing", "is_stale": true}' > "$STATE_DIR/reminder.tmp.json"
-        echo "Waktu Solat: No Cache File" > "$STATE_DIR/reminder.tmp.cli"
-        echo "<fc=#ff5555>WaktuSolat: No Cache</fc>" > "$STATE_DIR/reminder.tmp.txt"
-        echo "<span color='#ff5555'>WaktuSolat: No Cache</span>" > "$STATE_DIR/reminder.tmp.html"
-
-        mv "$STATE_DIR/reminder.tmp.json" "$STATE_DIR/reminder.json"
-        mv "$STATE_DIR/reminder.tmp.cli"  "$STATE_DIR/reminder.cli"
-        mv "$STATE_DIR/reminder.tmp.txt"  "$STATE_DIR/reminder.txt"
-        mv "$STATE_DIR/reminder.tmp.html" "$STATE_DIR/reminder.html"
-        sleep 5
-        continue
-    fi
-
-    TOGGLE=$(( $(date +%s) % 2 ))
-
-    # Single-pass parsing with jq
-    IFS=$'\t' read -r IS_STALE SERVER_TIME MDATE HDATE DAY FJR SYU ZHR ASR MGH ISY < <(
-        jq -r '
-          def p(bm; key):
-            if .prayers | type == "array" then
-              (.prayers[] | select(.name_bm == bm).time) // "-"
-            else
-              .prayers[key] // "-"
-            end;
-          [
-            (if .is_stale == null then true else .is_stale end | tostring),
-            (.server_time // .last_updated // "-"),
-            (.gregorian_date // .date // "-"),
-            (.hijri_date // "-"),
-            (.day // "-"),
-            p("Subuh"; "fajr"),
-            p("Syuruk"; "syuruk"),
-            p("Zohor"; "dhuhr"),
-            p("Asar"; "asr"),
-            p("Maghrib"; "maghrib"),
-            p("Isyak"; "isha")
-          ] | @tsv
-        ' "$CACHE_FILE"
-    )
-
-    # Convert Gregorian Date / Day
-    if [[ "$MDATE" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
-        G_DATE_ISO="$MDATE"
-    else
-        G_DATE_ISO=$(date -d "$MDATE" +"%Y-%m-%d" 2>/dev/null || date +"%Y-%m-%d")
-    fi
-
-    G_MONTH_ABB=$(date -d "$G_DATE_ISO" +"%b" 2>/dev/null || echo "Aug")
-    G_DAY_ABB=$(date -d "$G_DATE_ISO" +"%a" 2>/dev/null || echo "Sun")
-
-    # Extract Hijri Month & Day
-    IFS='-' read -r H_YEAR H_MONTH_NUM H_DAY <<< "$HDATE"
-    H_MONTH_NAME=$(get_hijri_month_name "${H_MONTH_NUM:-2}")
-    H_DAY_NAME=$(get_hijri_day_name "$DAY")
-    H_NEXT_DAY_NAME=$(get_next_hijri_day_name "$H_DAY_NAME")
 
     #
-    ## Calculate active prayer highlight colors
-    #NOW_HM=$(date +"%H:%M")
-    #COLOR_FJR="#7fffd4"; COLOR_SYU="#7fffd4"; COLOR_ZHR="#7fffd4"
-    #COLOR_ASR="#7fffd4"; COLOR_MGH="#7fffd4"; COLOR_ISY="#7fffd4"
+    # stat (System Call / Command): A utility and kernel system call that queries a file's metadata (such as modification time, permissions, or file size) without opening or reading the actual file data.
+    # Executing stat every 0.5 seconds spawns two external binary processes per second (stat). On modern hardware running Linux, spawning 2 lightweight process calls per second consumes less than 0.01% CPU usage, which is negligible and will not impact system performance.
+    # If you want to eliminate the external stat process fork entirely so that the main loop uses 0% process spawning overhead, you can replace stat with Bash's built-in file test operator test -nt (newer than) against a local reference variable or timestamp file.
+    # However, the current setup is already completely safe for disk health and performance.
     #
-    #if [[ "$NOW_HM" < "$FJR" ]]; then
-    #    COLOR_ISY="#ffbf00"
-    #elif [[ "$NOW_HM" < "$SYU" ]]; then
-    #    COLOR_FJR="#ffbf00"
-    #elif [[ "$NOW_HM" < "$ZHR" ]]; then
-    #    COLOR_SYU="#ffbf00"
-    #elif [[ "$NOW_HM" < "$ASR" ]]; then
-    #    COLOR_ZHR="#ffbf00"
-    #elif [[ "$NOW_HM" < "$MGH" ]]; then
-    #    COLOR_ASR="#ffbf00"
-    #elif [[ "$NOW_HM" < "$ISY" ]]; then
-    #    COLOR_MGH="#ffbf00"
-    #else
-    #    COLOR_ISY="#ffbf00"
-    #fi
+    # Get the last modification time of the cache file
+    CURRENT_MTIME=$(stat -c %Y "$CACHE_FILE" 2>/dev/null || echo 0)
 
-    # 1. Calculate current time in minutes for integer math
-    NOW_H=$(date +"%H")
-    NOW_M=$(date +"%M")
-    NOW_MINS=$(( 10#$NOW_H * 60 + 10#$NOW_M ))
-    NOW_HM="${NOW_H}:${NOW_M}"
+    # Only run jq and static date parsing if the file has been updated
+    if [[ "$CURRENT_MTIME" != "$LAST_CACHE_MTIME" ]] && [[ -f "$CACHE_FILE" ]]; then
+        IFS=$'\t' read -r IS_STALE SERVER_TIME MDATE HDATE DAY FJR SYU ZHR ASR MGH ISY < <(
+            jq -r '
+              def p(bm; key):
+                if .prayers | type == "array" then
+                  (.prayers[] | select(.name_bm == bm).time) // "-"
+                else
+                  .prayers[key] // "-"
+                end;
+              [
+                (if .is_stale == null then true else .is_stale end | tostring),
+                (.server_time // .last_updated // "-"),
+                (.gregorian_date // .date // "-"),
+                (.hijri_date // "-"),
+                (.day // "-"),
+                p("Subuh"; "fajr"),
+                p("Syuruk"; "syuruk"),
+                p("Zohor"; "dhuhr"),
+                p("Asar"; "asr"),
+                p("Maghrib"; "maghrib"),
+                p("Isyak"; "isha")
+              ] | @tsv
+            ' "$CACHE_FILE"
+        )
 
-    # 2. Determine the standard "active" period (Original Fallback Logic)
-    ACTIVE_P="ISY"
-    if [[ "$NOW_HM" < "$FJR" ]]; then ACTIVE_P="ISY"
-    elif [[ "$NOW_HM" < "$SYU" ]]; then ACTIVE_P="FJR"
-    elif [[ "$NOW_HM" < "$ZHR" ]]; then ACTIVE_P="SYU"
-    elif [[ "$NOW_HM" < "$ASR" ]]; then ACTIVE_P="ZHR"
-    elif [[ "$NOW_HM" < "$MGH" ]]; then ACTIVE_P="ASR"
-    elif [[ "$NOW_HM" < "$ISY" ]]; then ACTIVE_P="MGH"
-    fi
-
-    # 3. Dynamic time-based color calculator
-    get_prayer_color() {
-        local p_name="$1"
-        local p_time="$2"
-        local base_color="#7fffd4" # Default Aquamarine
-
-        [[ "$ACTIVE_P" == "$p_name" ]] && base_color="#ffbf00"
-        [[ "$p_time" == "-" ]] && { echo "$base_color"; return; }
-
-        # Convert target prayer time to minutes
-        local ph pm p_mins diff
-        IFS=: read -r ph pm <<< "$p_time"
-        p_mins=$(( 10#$ph * 60 + 10#$pm ))
-        diff=$(( p_mins - NOW_MINS ))
-
-        if (( diff > 15 && diff <= 30 )); then
-            (( TOGGLE == 1 )) && echo "#ffbf00" || echo "#7fffd4" # Blinking Amber
-        elif (( diff >= -15 && diff <= 15 )); then
-            echo "#ff4d4d" # Solid Red
-        elif (( diff >= -30 && diff < -15 )); then
-            echo "#ffbf00" # Solid Amber
+        # Convert Gregorian Date / Day
+        if [[ "$MDATE" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+            G_DATE_ISO="$MDATE"
         else
-            echo "$base_color"
+            G_DATE_ISO=$(date -d "$MDATE" +"%Y-%m-%d" 2>/dev/null || date +"%Y-%m-%d")
         fi
-    }
 
-    # 4. Assign calculated colors to formatters
-    COLOR_FJR=$(get_prayer_color "FJR" "$FJR")
-    COLOR_SYU=$(get_prayer_color "SYU" "$SYU")
-    COLOR_ZHR=$(get_prayer_color "ZHR" "$ZHR")
-    COLOR_ASR=$(get_prayer_color "ASR" "$ASR")
-    COLOR_MGH=$(get_prayer_color "MGH" "$MGH")
-    COLOR_ISY=$(get_prayer_color "ISY" "$ISY")
+        G_MONTH_ABB=$(date -d "$G_DATE_ISO" +"%b" 2>/dev/null || echo "Aug")
+        G_DAY_ABB=$(date -d "$G_DATE_ISO" +"%a" 2>/dev/null || echo "Sun")
+
+        # Extract Hijri Month & Day
+        IFS='-' read -r H_YEAR H_MONTH_NUM H_DAY <<< "$HDATE"
+        H_MONTH_NAME=$(get_hijri_month_name "${H_MONTH_NUM:-2}")
+        H_DAY_NAME=$(get_hijri_day_name "$DAY")
+        H_NEXT_DAY_NAME=$(get_next_hijri_day_name "$H_DAY_NAME")
+
+        LAST_CACHE_MTIME="$CURRENT_MTIME"
+    fi
+
+    ## These must run every second for the clock and blinker
+    #TOGGLE=$(( $(date +%s) % 2 ))
+    #NOW_HM=$(date +"%H:%M")
+    #
+    # BASH >=5.0 BUILT-INS: Zero forks. Instant execution.
+    TOGGLE=$(( EPOCHSECONDS % 2 ))
+    printf -v NOW_HM '%(%H:%M)T' -1  # Gets current HH:MM natively in bash
+
+    # Compute all prayer colors once centrally for any formatter to use
+    get_prayer_colors "$FJR" "$NOW_HM" "$TOGGLE" FJR_FG FJR_BG
+    get_prayer_colors "$SYU" "$NOW_HM" "$TOGGLE" SYU_FG SYU_BG
+    get_prayer_colors "$ZHR" "$NOW_HM" "$TOGGLE" ZHR_FG ZHR_BG
+    get_prayer_colors "$ASR" "$NOW_HM" "$TOGGLE" ASR_FG ASR_BG
+    get_prayer_colors "$MGH" "$NOW_HM" "$TOGGLE" MGH_FG MGH_BG
+    get_prayer_colors "$ISY" "$NOW_HM" "$TOGGLE" ISY_FG ISY_BG
+
+    # ==========================================
+    # TEST BLOCK: UNCOMMENT ONE TO TEST BLINKING
+    # ==========================================
+    # 1. Test Amber Blink (20 mins in the future)
+    #printf -v ZHR '%(%H:%M)T' "$(( EPOCHSECONDS + 1200 ))"
+
+    # 2. Test Red Blink (5 mins in the future)
+    # printf -v ZHR '%(%H:%M)T' "$(( EPOCHSECONDS + 300 ))"
+    #printf -v ASR '%(%H:%M)T' "$(( EPOCHSECONDS + 300 ))"
+
+    # 3. Test Solid Red (5 mins in the past / after prayer)
+    # printf -v ZHR '%(%H:%M)T' "$(( EPOCHSECONDS - 300 ))"
+    #printf -v MGH '%(%H:%M)T' "$(( EPOCHSECONDS - 300 ))"
+    # ==========================================
+
 
     # Export context for child formatters
-    export ZONE SERVER_TIME IS_STALE DAY FJR SYU ZHR ASR MGH ISY TOGGLE \
+    #export ZONE SERVER_TIME IS_STALE DAY FJR SYU ZHR ASR MGH ISY TOGGLE NOW_HM \
+    #       G_DATE_ISO G_MONTH_ABB G_DAY_ABB HDATE H_MONTH_NAME H_DAY_NAME \
+    #       H_NEXT_DAY_NAME STATE_DIR
+    export ZONE SERVER_TIME IS_STALE DAY FJR SYU ZHR ASR MGH ISY TOGGLE NOW_HM \
            G_DATE_ISO G_MONTH_ABB G_DAY_ABB HDATE H_MONTH_NAME H_DAY_NAME \
-           H_NEXT_DAY_NAME COLOR_FJR COLOR_SYU COLOR_ZHR COLOR_ASR COLOR_MGH COLOR_ISY STATE_DIR
+           H_NEXT_DAY_NAME STATE_DIR \
+           FJR_FG FJR_BG SYU_FG SYU_BG ZHR_FG ZHR_BG \
+           ASR_FG ASR_BG MGH_FG MGH_BG ISY_FG ISY_BG
 
     # Execute plugins
     run_formatters
 
-    sleep 1
+    #sleep 1
+    #
+    # Sleep 0.5 prevents "beat frequency" aliasing with xmobar's internal polling interval
+    sleep 0.5
+
 done

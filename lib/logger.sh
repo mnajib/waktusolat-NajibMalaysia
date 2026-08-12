@@ -8,6 +8,8 @@
 [[ "${_LOGGER_SH_INCLUDED:-}" == "true" ]] && return
 declare -r _LOGGER_SH_INCLUDED="true"
 
+BASE_DIR="/tmp"
+
 # Logging levels
 LOG_LEVEL_SILENT=0
 LOG_LEVEL_ERROR=1
@@ -22,7 +24,7 @@ LOG_LEVEL=$LOG_LEVEL_INFO
 # Falls back to `id -un` if $USER is unset (e.g. under `set -u`, some
 # minimal systemd/container contexts don't export USER).
 : "${USER:=$(id -un)}"
-LOG_FILE="/tmp/${USER}-waktusolat-fetchd.log"
+LOG_FILE="${BASE_DIR}/${USER}-waktusolat-fetchd.log"
 
 set_log_level() {
     local level="$1"

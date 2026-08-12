@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+# lib/formatters/colored-cli-oneline-and-multiline.sh
+#
+# Copyright (c) 2026 waktusolat-NajibMalaysia
+# Licensed under the BSD 3-Clause License. See LICENSE file for details.
+
+set -euo pipefail
+
+source "${LIB_DIR}/prayer-proximity.sh"
+
+TMP_SINGLE="${STATE_DIR}/reminder.tmp-oneline.cli"
+FINAL_SINGLE="${STATE_DIR}/reminder-oneline.cli"
+
+TMP_MULTI="${STATE_DIR}/reminder.tmp-multiline.cli"
+FINAL_MULTI="${STATE_DIR}/reminder-multiline.cli"
+
+# ANSI Colors
+C_RESET="\033[0m"
+C_BOLD="\033[1m"
+C_RED="\033[31m"
+C_AMBER="\033[33m"
+C_GREEN="\033[32m"
+C_DIM="\033[2m"
+
+get_ansi_color_for_prayer() {
+    local prayer_hm="$1"
+    local prayer_min now_min delta class
+    prayer_min=$(hm_to_minutes "$prayer_hm")
+    now_min=$(hm_to_minutes "$NOW_HM")
+    delta=$(( prayer_min - now_min ))
+    class=$(classify_prayer_proximity "$delta")
+
+    case "$class" in
+        solid_red | blink_red)   echo -n "$C_RED" ;;
+        solid_amber | blink_amber) echo -n "$C_AMBER" ;;
+        *)                       echo -n "$C_GREEN" ;;
+    esac
+}
+
+STALE_MARK=""
+if [[ "$IS_STALE" == "true" ]]; then
+    STALE_MARK="${C_RED}[OLD]${C_RESET} "
+fi
+
+FJR_C=$(get_ansi_color_for_prayer "$FJR")
+SYU_C=$(get_ansi_color_for_prayer "$SYU")
+ZHR_C=$(get_ansi_color_for_prayer "$ZHR")
+ASR_C=$(get_ansi_color_for_prayer "$ASR")
+MGH_C=$(get_ansi_color_for_prayer "$MGH")
+ISY_C=$(get_ansi_color_for_prayer "$ISY")
+
+# 1. Single-line output
+cat <<EOF > "$TMP_SINGLE"
+${STALE_MARK}${C_BOLD}${ZONE}${C_RESET} | Fjr: ${FJR_C}${FJR}${C_RESET} | Syu: ${SYU_C}${SYU}${C_RESET} | Zhr: ${ZHR_C}${ZHR}${C_RESET} | Asr: ${ASR_C}${ASR}${C_RESET} | Mgh: ${MGH_C}${MGH}${C_RESET} | Isy: ${ISY_C}${ISY}${C_RESET}
+EOF
+
+# 2. Multi-line output
+cat <<EOF > "$TMP_MULTI"
+${STALE_MARK}${C_BOLD}Zone:${C_RESET} ${ZONE} (${G_DATE_ISO} / ${HDATE})
+ - Subuh:   ${FJR_C}${FJR}${C_RESET}
+ - Syuruk:  ${SYU_C}${SYU}${C_RESET}
+ - Zohor:   ${ZHR_C}${ZHR}${C_RESET}
+ - Asar:    ${ASR_C}${ASR}${C_RESET}
+ - Maghrib: ${MGH_C}${MGH}${C_RESET}
+ - Isyak:   ${ISY_C}${ISY}${C_RESET}
+EOF
+
+mv "$TMP_SINGLE" "$FINAL_SINGLE"
+mv "$TMP_MULTI" "$FINAL_MULTI"
