@@ -42,6 +42,13 @@ get_prayer_stage() {
     classify_prayer_proximity "$delta"
 }
 
+#get_prayer_colors_fix "$FJR" "$NOW_HM" "$TOGGLE" FJR_FG FJR_BG
+#get_prayer_colors_fix "$SYU" "$NOW_HM" "$TOGGLE" SYU_FG SYU_BG
+#get_prayer_colors_fix "$ZHR" "$NOW_HM" "$TOGGLE" ZHR_FG ZHR_BG
+#get_prayer_colors_fix "$ASR" "$NOW_HM" "$TOGGLE" ASR_FG ASR_BG
+#get_prayer_colors_fix "$MGH" "$NOW_HM" "$TOGGLE" MGH_FG MGH_BG
+#get_prayer_colors_fix "$ISY" "$NOW_HM" "$TOGGLE" ISY_FG ISY_BG
+
 # Evaluate proximity stages
 FJR_STAGE=$(get_prayer_stage "$FJR")
 SYU_STAGE=$(get_prayer_stage "$SYU")

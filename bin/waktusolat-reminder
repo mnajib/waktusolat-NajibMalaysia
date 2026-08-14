@@ -167,19 +167,19 @@ while true; do
     printf -v NOW_HM '%(%H:%M)T' -1  # Gets current HH:MM natively in bash
 
     # Compute all prayer colors once centrally for any formatter to use
-    #get_prayer_colors "$FJR" "$NOW_HM" "$TOGGLE" FJR_FG FJR_BG
-    #get_prayer_colors "$SYU" "$NOW_HM" "$TOGGLE" SYU_FG SYU_BG
-    #get_prayer_colors "$ZHR" "$NOW_HM" "$TOGGLE" ZHR_FG ZHR_BG
-    #get_prayer_colors "$ASR" "$NOW_HM" "$TOGGLE" ASR_FG ASR_BG
-    #get_prayer_colors "$MGH" "$NOW_HM" "$TOGGLE" MGH_FG MGH_BG
-    #get_prayer_colors "$ISY" "$NOW_HM" "$TOGGLE" ISY_FG ISY_BG
+    get_prayer_colors "$FJR" "$NOW_HM" "$TOGGLE" FJR_FG FJR_BG
+    get_prayer_colors "$SYU" "$NOW_HM" "$TOGGLE" SYU_FG SYU_BG
+    get_prayer_colors "$ZHR" "$NOW_HM" "$TOGGLE" ZHR_FG ZHR_BG
+    get_prayer_colors "$ASR" "$NOW_HM" "$TOGGLE" ASR_FG ASR_BG
+    get_prayer_colors "$MGH" "$NOW_HM" "$TOGGLE" MGH_FG MGH_BG
+    get_prayer_colors "$ISY" "$NOW_HM" "$TOGGLE" ISY_FG ISY_BG
     #
-    get_prayer_colors_fix "$FJR" "$NOW_HM" "$TOGGLE" FJR_FG FJR_BG
-    get_prayer_colors_fix "$SYU" "$NOW_HM" "$TOGGLE" SYU_FG SYU_BG
-    get_prayer_colors_fix "$ZHR" "$NOW_HM" "$TOGGLE" ZHR_FG ZHR_BG
-    get_prayer_colors_fix "$ASR" "$NOW_HM" "$TOGGLE" ASR_FG ASR_BG
-    get_prayer_colors_fix "$MGH" "$NOW_HM" "$TOGGLE" MGH_FG MGH_BG
-    get_prayer_colors_fix "$ISY" "$NOW_HM" "$TOGGLE" ISY_FG ISY_BG
+    #get_prayer_colors_fix "$FJR" "$NOW_HM" "$TOGGLE" FJR_FG FJR_BG
+    #get_prayer_colors_fix "$SYU" "$NOW_HM" "$TOGGLE" SYU_FG SYU_BG
+    #get_prayer_colors_fix "$ZHR" "$NOW_HM" "$TOGGLE" ZHR_FG ZHR_BG
+    #get_prayer_colors_fix "$ASR" "$NOW_HM" "$TOGGLE" ASR_FG ASR_BG
+    #get_prayer_colors_fix "$MGH" "$NOW_HM" "$TOGGLE" MGH_FG MGH_BG
+    #get_prayer_colors_fix "$ISY" "$NOW_HM" "$TOGGLE" ISY_FG ISY_BG
 
 
     # ==========================================

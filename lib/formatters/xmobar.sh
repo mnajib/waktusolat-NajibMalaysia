@@ -7,7 +7,7 @@ set -euo pipefail
 
 #source "${LIB_DIR}/prayer-proximity.sh"
 
-FINAL_OUT="${STATE_DIR}/reminder.txt"
+FINAL_OUT="${STATE_DIR}/reminder-xmobar.pango.xml"
 #FINAL_OUT="${STATE_DIR}/reminder-xmobar.txt"
 # Create a unique temp file in the same directory (ensures mv is atomic on the same mount)
 TMP_OUT="${FINAL_OUT}.tmp.$$"
