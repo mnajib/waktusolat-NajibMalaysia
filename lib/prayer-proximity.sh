@@ -101,3 +101,40 @@ get_prayer_colors() {
         blink_red)    [[ "$toggle" == "0" ]] && { _fg="ffffff"; _bg="ff3333"; } || { _fg="000000"; _bg="7fffd4"; } ;;
     esac
 }
+
+# get_prayer_colors <prayer_hm> <now_hm> <toggle> <out_fg_var> <out_bg_var>
+get_prayer_colors_fix() {
+    local prayer_hm="$1" now_hm="$2" toggle="$3"
+    local -n _fg="$4" _bg="$5" # Nameref: assigns directly to the parent variables
+
+    if [[ -z "$prayer_hm" || "$prayer_hm" == "-" ]]; then
+        _fg="000000"; _bg="7fffd4"
+        return
+    fi
+
+    # Native string splitting (avoids hm_to_minutes subshell entirely)
+    # 10# forces base-10 to prevent octal errors on numbers like "08"
+    local p_h=${prayer_hm%%:*} p_m=${prayer_hm##*:}
+    local n_h=${now_hm%%:*} n_m=${now_hm##*:}
+
+    local prayer_min=$(( 10#$p_h * 60 + 10#$p_m ))
+    local now_min=$(( 10#$n_h * 60 + 10#$n_m ))
+    local delta=$(( prayer_min - now_min ))
+
+    local class="neutral"
+    if   (( delta > 30 ));   then class="neutral"
+    elif (( delta > 15 ));   then class="blink_amber"
+    elif (( delta > 0  ));   then class="blink_red"
+    elif (( delta >= -15 )); then class="solid_red"
+    elif (( delta >= -30 )); then class="solid_amber"
+    fi
+
+    case "$class" in
+        neutral)      _fg="000000"; _bg="7fffd4" ;;
+        #solid_amber)  _fg="000000"; _bg="ffbf00" ;;
+        #solid_red)    _fg="ffffff"; _bg="ff3333" ;;
+        #blink_amber)  [[ "$toggle" == "0" ]] && { _fg="000000"; _bg="ffbf00"; } || { _fg="000000"; _bg="7fffd4"; } ;;
+        #blink_red)    [[ "$toggle" == "0" ]] && { _fg="ffffff"; _bg="ff3333"; } || { _fg="000000"; _bg="7fffd4"; } ;;
+        *)      _fg="000000"; _bg="7fffd4" ;;
+    esac
+}
