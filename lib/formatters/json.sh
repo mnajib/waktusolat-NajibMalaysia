@@ -28,13 +28,15 @@ IS_STALE="${IS_STALE:-false}"
 
 # Helper function to compute delta minutes and return stage
 get_prayer_stage() {
-    local prayer_hm="$1"
-    if [[ -z "$prayer_hm" || "$prayer_hm" == "-" ]]; then
+    local prayer_hm="$1"    # Accepts the target prayer time formatted as HH:MM
+    if [[ -z "$prayer_hm" || "$prayer_hm" == "-" ]]; then  # Checks if the input is empty (-z) or set to a placeholder hyper-dash ("-")
         echo "neutral"
         return
     fi
-    local p_h=${prayer_hm%%:*} p_m=${prayer_hm##*:}
-    local n_h=${NOW_HM%%:*} n_m=${NOW_HM##*:}
+
+    local p_h=${prayer_hm%%:*} p_m=${prayer_hm##*:}    # from the prayer_hm; get the prayer hour time and set it to p_h, get the prayer minute time and set it to p_m
+    local n_h=${NOW_HM%%:*} n_m=${NOW_HM##*:}          # from the current (now) time; get the hour time and set it to n_h, get minute time and set it to n_m
+
     local prayer_min=$(( 10#$p_h * 60 + 10#$p_m ))
     local now_min=$(( 10#$n_h * 60 + 10#$n_m ))
     local delta=$(( prayer_min - now_min ))
@@ -48,6 +50,19 @@ get_prayer_stage() {
 #get_prayer_colors_fix "$ASR" "$NOW_HM" "$TOGGLE" ASR_FG ASR_BG
 #get_prayer_colors_fix "$MGH" "$NOW_HM" "$TOGGLE" MGH_FG MGH_BG
 #get_prayer_colors_fix "$ISY" "$NOW_HM" "$TOGGLE" ISY_FG ISY_BG
+#
+FJR_FG="000000"
+FJR_BG="7fffd4"
+SYU_FG="000000"
+SYU_BG="7fffd4"
+ZHR_FG="000000"
+ZHR_BG="7fffd4"
+ASR_FG="000000"
+ASR_BG="7fffd4"
+MGH_FG="000000"
+MGH_BG="7fffd4"
+ISY_FG="000000" # black
+ISY_BG="7fffd4" # aquamarine
 
 # Evaluate proximity stages
 FJR_STAGE=$(get_prayer_stage "$FJR")
