@@ -209,9 +209,9 @@ while true; do
     # Execute plugins
     run_formatters
 
-    sleep 1
+    #sleep 1
     #
     # Sleep 0.5 prevents "beat frequency" aliasing with xmobar's internal polling interval
-    #sleep 0.5
+    sleep 0.5
 
 done
